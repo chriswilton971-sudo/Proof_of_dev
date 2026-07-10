@@ -1,0 +1,60 @@
+# .github/workflows/scoring.yml
+#
+# Runs automatically on every push to `main`.
+# Pipeline: checkout -> setup Node -> install deps -> generate scoring
+#           -> run scoring tests -> post-setup verification.
+#
+# ASSUMPTIONS (adjust if your package.json differs):
+#   - "generate:scoring" is an npm script that builds/refreshes the
+#     reputation scoring output (e.g. scripts/generate-scoring.js).
+#   - "test:scoring" is an npm script that runs scoring-specific tests
+#     (e.g. `vitest run tests/scoring` or `jest tests/scoring`).
+#   If these don't exist yet, either add them to package.json or rename
+#   the `run:` lines below to match your actual scripts.
+
+name: Scoring Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}   # allows manual "Run workflow" trigger from GitHub UI
+
+jobs:
+  scoring:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        # `npm ci` (not `npm install`) — uses package-lock.json exactly,
+        # which avoids the "phantom package" drift issues you hit before.
+        run: npm ci
+
+      - name: Verify no phantom / unresolved packages
+        # Fails fast if package-lock.json references anything not
+        # actually installable, instead of failing deep into the pipeline.
+        run: npm ls --depth=0 || (echo "❌ Dependency tree has unresolved packages" && exit 1)
+
+      - name: Generate scoring
+        run: npm run generate:scoring
+
+      - name: Run scoring tests
+        run: npm run test:scoring
+
+      - name: Post-setup Node verification
+        run: |
+          echo "Node version: $(node -v)"
+          echo "npm version: $(npm -v)"
+          echo "✓ Scoring pipeline completed successfully on $(date -u)"
+
+    # Optional: uncomment to fail the whole workflow loudly in the GitHub
+    # UI (red X) if any step above fails — useful if this gates deploys.
+    # continue-on-error: false

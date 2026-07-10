@@ -1,0 +1,74 @@
+# .github/workflows/fix-lockfile.yml
+#
+# Regenerates package-lock.json from scratch to resolve
+# "invalid dependency reference" / phantom package errors.
+#
+# Trigger:
+#   - Manual only (workflow_dispatch), so it doesn't run on every push.
+#     Go to Actions tab -> "Fix Lockfile" -> "Run workflow" whenever
+#     npm ci starts failing with a lockfile integrity error.
+#
+# What it does:
+#   1. Checks out main
+#   2. Deletes node_modules + package-lock.json (clean slate)
+#   3. Runs `npm install` to regenerate a fresh, valid lockfile
+#   4. Verifies the new lockfile actually installs cleanly (npm ci)
+#   5. Commits the regenerated package-lock.json back to main
+#      (only if it actually changed)
+#
+# Requires: repo Settings -> Actions -> General -> Workflow permissions
+#   set to "Read and write permissions" so the bot can push the commit.
+
+name: Fix Lockfile
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate-lockfile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Remove existing lockfile and node_modules
+        run: |
+          rm -rf node_modules
+          rm -f package-lock.json
+
+      - name: Regenerate package-lock.json
+        # No --package-lock-only: we want a real install pass so npm
+        # actually resolves every dependency, not just writes a lockfile
+        # blindly on top of a broken tree.
+        run: npm install
+
+      - name: Verify lockfile is valid (npm ci must succeed)
+        run: |
+          rm -rf node_modules
+          npm ci
+
+      - name: Check for dependency tree issues
+        run: npm ls --depth=0 || (echo "⚠️  Some dependencies still unresolved — check output above" && exit 1)
+
+      - name: Commit regenerated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet package-lock.json; then
+            echo "No changes to package-lock.json — nothing to commit."
+          else
+            git add package-lock.json
+            git commit -m "fix(deps): regenerate package-lock.json to resolve invalid dependency reference"
+            git push origin main
+          fi

@@ -1,0 +1,32 @@
+{
+  "name": "proof-of-dev",
+  "version": "1.0.0",
+  "description": "Soulbound ERC-721 token representing a developer's on-chain reputation",
+  "type": "module",
+  "scripts": {
+    "test": "hardhat test",
+    "test:coverage": "hardhat coverage",
+    "compile": "hardhat compile",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia",
+    "node": "hardhat node",
+    "dev": "npm run node & npm run dev:frontend",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "start:frontend": "cd frontend && npm run start",
+    "lint": "solhint 'contracts/**/*.sol'"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@nomicfoundation/hardhat-ethers": "^3.0.0",
+    "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
+    "hardhat": "^2.19.0",
+    "ethers": "^6.9.0",
+    "chai": "^4.3.7",
+    "dotenv": "^16.3.1",
+    "solhint": "^4.0.0"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0"
+  }
+}

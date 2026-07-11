@@ -7,15 +7,25 @@
   "scripts": {
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "onchain:deploy": "node deploy.js"
+    "onchain:deploy": "node deploy.js",
+    "test": "npm run test:integration && npm run test:ui",
+    "test:integration": "node tests/integration/integration.test.js",
+    "test:ui": "playwright test --config=tests/playwright/playwright.config.ts",
+    "test:ui:debug": "playwright test --config=tests/playwright/playwright.config.ts --debug",
+    "test:ui:headed": "playwright test --config=tests/playwright/playwright.config.ts --headed"
   },
-  "keywords": [],
+  "keywords": [
+    "ethereum",
+    "smart-contract",
+    "proof-of-dev"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
     "ethers": "^6.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-plugin-prettier": "^5.1.3",

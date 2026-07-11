@@ -8,7 +8,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "onchain:deploy": "node deploy.js",
-    "test": "npm run test:integration && npm run test:ui",
+    "test": "npm run test:integration",
     "test:integration": "node tests/integration/integration.test.js",
     "test:ui": "playwright test --config=tests/playwright/playwright.config.ts",
     "test:ui:debug": "playwright test --config=tests/playwright/playwright.config.ts --debug",

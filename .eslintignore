@@ -1,0 +1,8 @@
+node_modules/
+dist/
+artifacts/
+*.sol
+*.zip
+*.json.lock
+package-lock*.json
+.env*

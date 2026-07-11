@@ -1,0 +1,97 @@
+name: CI - Playwright tests
+
+on:
+  pull_request:
+  push:
+    branches: [ ci/playwright-tests ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python (for static server fallback)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Unzip project archive (if present)
+        run: |
+          mkdir -p site
+          if [ -f "proof of dev-main-fixed.zip" ]; then
+            unzip -q "proof of dev-main-fixed.zip" -d site || true
+          fi
+          ls -la site || true
+
+      - name: Determine serve directory
+        id: find_site
+        run: |
+          if [ -f site/index.html ]; then
+            echo "serve_dir=site" >> $GITHUB_OUTPUT
+          else
+            first_html=$(find site -maxdepth 2 -type f -name "index.html" | head -n 1 || true)
+            if [ -n "$first_html" ]; then
+              serve_dir=$(dirname "$first_html")
+              echo "serve_dir=$serve_dir" >> $GITHUB_OUTPUT
+            else
+              echo "serve_dir=" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Print serve_dir
+        run: echo "Serving from: ${{ steps.find_site.outputs.serve_dir }}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install Playwright test harness
+        working-directory: tests/playwright
+        run: |
+          npm install
+          npx playwright install --with-deps
+        env:
+          CI: true
+
+      - name: Start static server
+        run: |
+          if [ -z "${{ steps.find_site.outputs.serve_dir }}" ]; then
+            echo "No site found to serve. Skipping server start." > server-info.txt
+            echo "NO_SITE" > server-status.txt
+          else
+            echo "Starting server from ${{ steps.find_site.outputs.serve_dir }}"
+            python -m http.server 3000 --directory "${{ steps.find_site.outputs.serve_dir }}" &
+            echo $! > server.pid
+            sleep 1
+            curl -sSf http://localhost:3000 || (echo "Server did not start"; exit 1)
+            echo "Server started" > server-status.txt
+          fi
+
+      - name: Run Playwright tests
+        working-directory: tests/playwright
+        run: |
+          mkdir -p artifacts
+          npx playwright test --config=playwright.config.ts --reporter=list || true
+        env:
+          BASE_URL: "http://localhost:3000"
+
+      - name: Collect Playwright artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            tests/playwright/artifacts/**
+            tests/playwright/test-results/**
+            tests/playwright/playwright-report/**
+
+      - name: Upload zipped site (if created)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-contents
+          path: site

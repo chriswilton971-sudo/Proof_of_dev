@@ -1,0 +1,55 @@
+name: Deploy to Sepolia Testnet
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'sepolia'
+        type: choice
+        options:
+          - sepolia
+          - localhost
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: npm run compile
+
+      - name: Deploy to ${{ github.event.inputs.environment }}
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          SIGNER_ADDRESS: ${{ secrets.SIGNER_ADDRESS }}
+          NFT_METADATA_BASE_URI: ${{ secrets.NFT_METADATA_BASE_URI }}
+          NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
+        run: npm run deploy:${{ github.event.inputs.environment }}
+
+      - name: Save deployment info
+        run: |
+          echo "Deployment completed successfully"
+          echo "Check the logs for contract address"
+
+      - name: Create deployment summary
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: deployment-summary
+          path: |
+            artifacts/

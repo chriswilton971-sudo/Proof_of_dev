@@ -34,8 +34,10 @@ const SIGNER_GETTER_CANDIDATES = ["trustedSigner", "signer", "verifierSigner"];
 
 function buildRpcList(alchemyKey) {
   const urls = [`https://eth-sepolia.g.alchemy.com/v2/${alchemyKey}`];
-  if (process.env.SEPOLIA_RPC_FALLBACK_1) urls.push(process.env.SEPOLIA_RPC_FALLBACK_1);
-  if (process.env.SEPOLIA_RPC_FALLBACK_2) urls.push(process.env.SEPOLIA_RPC_FALLBACK_2);
+  if (process.env.SEPOLIA_RPC_FALLBACK_1)
+    urls.push(process.env.SEPOLIA_RPC_FALLBACK_1);
+  if (process.env.SEPOLIA_RPC_FALLBACK_2)
+    urls.push(process.env.SEPOLIA_RPC_FALLBACK_2);
   return urls;
 }
 
@@ -50,7 +52,9 @@ async function connectWithFallback(rpcUrls) {
       console.log(`Connected to RPC: ${url.replace(/\/v2\/.*/, "/v2/••••")}`);
       return provider;
     } catch (err) {
-      console.warn(`RPC unreachable, trying next: ${url.replace(/\/v2\/.*/, "/v2/••••")}`);
+      console.warn(
+        `RPC unreachable, trying next: ${url.replace(/\/v2\/.*/, "/v2/••••")}`
+      );
       lastErr = err;
     }
   }
@@ -72,7 +76,12 @@ async function getOnChainSigner(contract) {
   return null;
 }
 
-async function deployWithRetry(factory, baseURI, signerAddress, { retries = 2 } = {}) {
+async function deployWithRetry(
+  factory,
+  baseURI,
+  signerAddress,
+  { retries = 2 } = {}
+) {
   let attempt = 0;
   let lastErr;
   while (attempt <= retries) {
@@ -84,7 +93,9 @@ async function deployWithRetry(factory, baseURI, signerAddress, { retries = 2 } 
       lastErr = err;
       attempt++;
       const transient =
-        /timeout|network|ETIMEDOUT|ECONNRESET|underpriced|nonce/i.test(err?.message ?? "");
+        /timeout|network|ETIMEDOUT|ECONNRESET|underpriced|nonce/i.test(
+          err?.message ?? ""
+        );
       if (attempt > retries || !transient) throw err;
       const backoffMs = 2000 * attempt;
       console.warn(
@@ -109,7 +120,9 @@ async function main() {
   const signerAddress = process.env.SIGNER_ADDRESS;
 
   if (!privateKey || !alchemyKey) {
-    console.error("Missing DEPLOYER_PRIVATE_KEY or NEXT_PUBLIC_ALCHEMY_API_KEY in .env.local");
+    console.error(
+      "Missing DEPLOYER_PRIVATE_KEY or NEXT_PUBLIC_ALCHEMY_API_KEY in .env.local"
+    );
     process.exit(1);
   }
 
@@ -145,7 +158,11 @@ async function main() {
   }
 
   const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
-  const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
+  const factory = new ethers.ContractFactory(
+    artifact.abi,
+    artifact.bytecode,
+    wallet
+  );
 
   console.log("Deploying ProofOfDev with baseURI:", baseURI);
   console.log("Using signer:", signerAddress);
@@ -161,7 +178,9 @@ async function main() {
         SIGNER_GETTER_CANDIDATES.join(", ") +
         "). Verify manually that minting works with your EIP-712 signature flow."
     );
-  } else if (onChain.value.toLowerCase() !== signerAddress.toLowerCase()) {
+  } else if (
+    onChain.value.toLowerCase() !== signerAddress.toLowerCase()
+  ) {
     console.error(
       `❌ On-chain ${onChain.name}() = ${onChain.value} does not match SIGNER_ADDRESS = ${signerAddress}. EIP-712 minting will fail signature checks.`
     );

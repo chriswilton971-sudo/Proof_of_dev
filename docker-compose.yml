@@ -1,0 +1,31 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+    env_file:
+      - .env.local
+    volumes:
+      # Mount source for live-reload during development, but keep the
+      # container's own node_modules (with the correct native zeromq
+      # binary for the container's platform) instead of the host's.
+      - .:/app
+      - /app/node_modules
+      - /app/apps/web/node_modules
+
+volumes:
+  mongo_data:

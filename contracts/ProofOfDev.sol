@@ -10,6 +10,7 @@ contract ProofOfDev {
     event BaseURIUpdated(string oldURI, string newURI);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event Verified(uint256 indexed tokenId, address indexed by);
 
     error AlreadyMinted();
     error NotMinted();
@@ -22,6 +23,7 @@ contract ProofOfDev {
     error NotOwner();
     error NotPendingOwner();
     error NonTransferable();
+    error AlreadyVerified();
 
     string public constant name = "Proof of Dev";
     string public constant symbol = "POD";
@@ -41,6 +43,7 @@ contract ProofOfDev {
     }
 
     mapping(uint256 => DevMetadata) private _metadata;
+    mapping(uint256 => bool) private _verified;
     string private _baseTokenURI;
     address public owner;
     address public pendingOwner;
@@ -299,6 +302,25 @@ contract ProofOfDev {
         address oldSigner = signer;
         signer = newSigner;
         emit SignerUpdated(oldSigner, newSigner);
+    }
+
+    /// @notice Marks a minted token as "verified/processed" — intended to be
+    ///         called by an automation bot (e.g. a KeeperHub workflow) as a
+    ///         post-mint follow-up step. Gated to `onlyOwner`: the calling
+    ///         wallet (bot or human) must hold the contract's owner key.
+    /// @dev    One-way flag. There is no unset function by design — if you
+    ///         need to reverse a mistaken verification, that's a deliberate
+    ///         omission worth revisiting rather than adding silently.
+    function markVerified(uint256 tokenId) external onlyOwner {
+        if (_owners[tokenId] == address(0)) revert TokenDoesNotExist();
+        if (_verified[tokenId]) revert AlreadyVerified();
+        _verified[tokenId] = true;
+        emit Verified(tokenId, msg.sender);
+    }
+
+    function isVerified(uint256 tokenId) external view returns (bool) {
+        if (_owners[tokenId] == address(0)) revert TokenDoesNotExist();
+        return _verified[tokenId];
     }
 
     function _toString(uint256 value) private pure returns (string memory) {

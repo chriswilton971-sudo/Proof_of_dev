@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "keeperhub": {
+      "type": "http",
+      "url": "${KEEPERHUB_BASE_URL:-https://app.keeperhub.com}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${KEEPERHUB_API_KEY}"
+      }
+    }
+  }
+}

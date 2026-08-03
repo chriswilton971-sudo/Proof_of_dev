@@ -26,7 +26,7 @@ export function ScoreCard({ profile }: ScoreCardProps) {
       <CardBody className="flex items-center justify-between gap-4 pb-4">
         <div className="min-w-0">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">
-            Activity Score
+            Developer Reputation Score
           </p>
           <div className="flex items-baseline gap-3 flex-wrap">
             <span className="text-5xl font-bold text-white tabular-nums leading-none">
@@ -37,30 +37,48 @@ export function ScoreCard({ profile }: ScoreCardProps) {
             </span>
           </div>
           <p className="text-sm text-slate-500 mt-1.5">{tier.description}</p>
-        </div>
+        
+<p className="text-xs text-slate-400 mt-2">
+  Your reputation score is calculated from publicly available on-chain activity.
+</p> 
+
+ <div className="mt-4 rounded-lg border border-slate-700 p-3 bg-slate-900/40">
+    <p className="text-xs font-semibold text-slate-300 mb-2">
+    Your score is based on:
+  </p>
+
+  <ul className="space-y-1 text-sm text-slate-400">
+    <li>✓ Smart contract deployments</li>
+    <li>✓ Verified smart contracts</li>
+    <li>✓ ENS identity</li>
+    <li>✓ Consistent on-chain activity</li>
+  </ul>
+</div>
+
+</div>
         <ScoreRing score={profile.score} color={tier.color} />
       </CardBody>
 
       {/* ── Horizontal breakdown bars ──────────────────────────────────────── */}
       <div className="px-6 pb-5 space-y-4 border-t border-slate-800 pt-5">
-        <SectionLabel>Score Breakdown</SectionLabel>
+        <SectionLabel>How your score was calculated</SectionLabel>
 
         <BarRow
-          label="Contract Deployments"
+          label="Smart contracts you've deployed"
           points={breakdown.contractDeployments}
           max={MAX_DEPLOY_PTS}
           detail={explanations[0]}
           color="indigo"
         />
         <BarRow
-          label="Verified Contracts"
+          label="Verified contracts"
           points={breakdown.verifiedContracts}
           max={MAX_VERIFY_PTS}
           detail={explanations[1]}
           color="green"
         />
         <BarRow
-          label="ENS Identity"
+          label="ENS Profile"
           points={breakdown.ensOwnership + breakdown.ensMetadata}
           max={MAX_ENS_PTS}
           detail={explanations[2]}

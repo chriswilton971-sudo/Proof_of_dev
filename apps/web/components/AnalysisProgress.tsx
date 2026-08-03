@@ -3,13 +3,31 @@
 import { AnalysisStage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STEPS: { id: AnalysisStage; label: string }[] = [
-  { id: "queued", label: "Queued" },
-  { id: "deployments", label: "Fetching deployments" },
-  { id: "verification", label: "Checking verification" },
-  { id: "ens", label: "Resolving ENS" },
-  { id: "scoring", label: "Calculating score" },
-  { id: "complete", label: "Complete" },
+const STEPS = [
+  {
+    id: "queued",
+    label: "Waiting to start",
+  },
+  {
+    id: "deployments",
+    label: "Finding your smart contracts",
+  },
+  {
+    id: "verification",
+    label: "Checking verified contracts",
+  },
+  {
+    id: "ens",
+    label: "Looking for your ENS profile",
+  },
+  {
+    id: "scoring",
+    label: "Calculating your reputation score",
+  },
+  {
+    id: "complete",
+    label: "Analysis complete",
+  },
 ];
 
 const STAGE_ORDER: AnalysisStage[] = STEPS.map((s) => s.id);
@@ -45,10 +63,28 @@ export function AnalysisProgress({
   return (
     <div className="surface-panel border border-surface-border rounded-2xl p-6 space-y-5 animate-fade-in-up">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-sm font-medium text-surface-foreground">
-          Analysis in progress
-        </p>
-        <span className="text-xs text-surface-muted tabular-nums">{elapsedSec}s</span>
+        <div>
+  <p className="text-sm font-semibold text-surface-foreground">
+    Analyzing your wallet
+  </p>
+
+  <p className="text-xs text-surface-muted mt-1">
+    We are reviewing your on-chain activity step by step.
+  </p>
+
+   <p className="text-xs text-surface-muted">
+  Step {Math.min(current + 1, visibleSteps.length)} of {visibleSteps.length}
+</p>
+</div>
+  <div className="text-right">
+  <p className="text-xs font-medium text-surface-foreground">
+    {progressPct}% Complete
+  </p>
+
+  <p className="text-xs text-surface-muted">
+    {elapsedSec}s
+  </p>
+</div>
       </div>
 
       <div className="h-1.5 rounded-full bg-surface-raised overflow-hidden">
@@ -57,6 +93,18 @@ export function AnalysisProgress({
           style={{ width: `${progressPct}%` }}
         />
       </div>
+
+<div className="rounded-lg border border-surface-border bg-surface-raised p-3">
+  <p className="text-xs text-surface-muted">
+    Current step
+  </p>
+
+  <p className="text-sm font-semibold text-surface-foreground mt-1">
+    {stage
+      ? visibleSteps.find((s) => s.id === stage)?.label
+      : "Preparing analysis..."}
+  </p>
+</div>
 
       <ol className="space-y-2">
         {visibleSteps.map((step) => {

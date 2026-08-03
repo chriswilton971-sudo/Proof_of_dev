@@ -3,11 +3,7 @@
 import { AnalysisStage } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const STEPS = [
-  {
-    id: "queued",
-    label: "Waiting to start",
-  },
+const STEPS: { id: AnalysisStage; label: string }[] = [
   {
     id: "deployments",
     label: "Finding your smart contracts",

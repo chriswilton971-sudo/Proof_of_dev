@@ -13,6 +13,7 @@ export const ErrorCode = {
   ANALYSIS_TIMEOUT: "ANALYSIS_TIMEOUT",
   INTERNAL_ERROR: "INTERNAL_ERROR",
   PROFILE_NOT_FOUND: "PROFILE_NOT_FOUND",
+  SPONSORSHIP_UNAVAILABLE: "SPONSORSHIP_UNAVAILABLE",
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -29,4 +30,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   INTERNAL_ERROR: "An unexpected error occurred. Please try again.",
   PROFILE_NOT_FOUND:
     "No stored analysis found for this address. Run an analysis first.",
+  SPONSORSHIP_UNAVAILABLE:
+    "Sponsored (gasless) submission isn't available right now. You can still submit this yourself with your own wallet.",
 };

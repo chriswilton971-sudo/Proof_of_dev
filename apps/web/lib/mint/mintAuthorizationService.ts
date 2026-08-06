@@ -24,6 +24,7 @@ import { ethers } from "ethers";
 import { CONTRACT_ADDRESS } from "@/lib/contract";
 import { fetchCanonicalProfile } from "@/lib/api/canonicalProfile";
 import { logger } from "@/lib/logger";
+import { executeWorkflow, isAgenticWalletConfigured, KeeperhubExecuteResult } from "@/lib/keeperhub/client";
 
 // Sepolia — the only network the ProofOfDev NFT is deployed on today.
 const MINT_CHAIN_ID = 11155111;
@@ -115,4 +116,63 @@ export async function createMintAuthorization(
     deadline: deadline.toString(),
     signature: { v, r, s },
   };
+}
+
+// ─── Sponsored (opt-in, gasless-for-the-user) submission ──────────────────────
+
+/**
+ * Opt-in alternative to createMintAuthorization(): instead of returning a
+ * signature for the user's own wallet to submit as mint(), this routes the
+ * mint call through KeeperHub's agentic wallet, which pays gas and submits
+ * on the user's behalf (settled via x402/MPP).
+ *
+ * The default createMintAuthorization() flow above is untouched and stays
+ * the default — this only runs on explicit opt-in (see
+ * POST /api/mint-authorization/sponsored) and only when
+ * KEEPERHUB_WALLET_PRIVATE_KEY is configured; otherwise it throws.
+ *
+ * This still signs the same EIP-712 MintAuthorization the contract expects
+ * (the contract's trustedSigner check doesn't care who submits the tx, only
+ * who signed the authorization) — KeeperHub is just the submitter, not a
+ * replacement for MINT_SIGNER_PRIVATE_KEY.
+ *
+ * KEEPERHUB_MINT_WORKFLOW_ID must point at a workflow configured in the
+ * KeeperHub dashboard that calls ProofOfDev.mint(recipient, score,
+ * contractCount, verifiedContractCount, hasENS, deadline, signature).
+ */
+export async function submitSponsoredMint(address: string): Promise<KeeperhubExecuteResult> {
+  if (!isAgenticWalletConfigured()) {
+    throw new Error(
+      "Sponsored mint requires KEEPERHUB_WALLET_PRIVATE_KEY to be configured."
+    );
+  }
+
+  const workflowId = process.env.KEEPERHUB_MINT_WORKFLOW_ID;
+  if (!workflowId) {
+    throw new Error(
+      "KEEPERHUB_MINT_WORKFLOW_ID is not set. Create the mint workflow in " +
+        "the KeeperHub dashboard and set its ID here."
+    );
+  }
+
+  // Reuses the exact same signed authorization the user-pays flow produces —
+  // the trustedSigner check on-chain is about who signed, not who submits.
+  const authorization = await createMintAuthorization(address);
+
+  logger.info("[mint] Submitting sponsored mint via KeeperHub", {
+    recipient: address.toLowerCase(),
+  });
+
+  const result = await executeWorkflow(workflowId, {
+    contractAddress: CONTRACT_ADDRESS,
+    recipient: address.toLowerCase(),
+    ...authorization,
+  });
+
+  logger.info("[mint] Sponsored mint submitted", {
+    recipient: address.toLowerCase(),
+    txHash: result.txHash ?? null,
+  });
+
+  return result;
 }

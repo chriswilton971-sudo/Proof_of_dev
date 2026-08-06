@@ -21,6 +21,7 @@ import { ethers } from "ethers";
 import { EAS_CONFIG } from "./config";
 import { PublicProfileResponse } from "@/lib/types";
 import { logger } from "@/lib/logger";
+import { executeWorkflow, isAgenticWalletConfigured, KeeperhubExecuteResult } from "@/lib/keeperhub/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -131,4 +132,71 @@ export async function createDelegatedAttestation(
     attester: await signer.getAddress(),
     deadline: NO_EXPIRATION,
   };
+}
+
+// ─── Sponsored (opt-in, gasless-for-the-user) submission ──────────────────────
+
+/**
+ * Opt-in alternative to createDelegatedAttestation(): instead of returning a
+ * signature for the user's own wallet to submit, this routes the attestation
+ * through KeeperHub's agentic wallet, which pays gas and submits the
+ * transaction on the user's behalf (settled via x402/MPP).
+ *
+ * The default createDelegatedAttestation() flow above is untouched and stays
+ * the default — this only runs when a caller explicitly opts in (see
+ * POST /api/attest/sponsored) and only when KEEPERHUB_WALLET_PRIVATE_KEY is
+ * actually configured; otherwise it throws rather than silently falling
+ * back to some other signer.
+ *
+ * KEEPERHUB_ATTEST_WORKFLOW_ID must point at a workflow configured in the
+ * KeeperHub dashboard that knows how to build and submit an EAS attest()
+ * call from these fields — this function does not encode calldata itself,
+ * it hands KeeperHub the same data createDelegatedAttestation() would sign.
+ */
+export async function submitSponsoredAttestation(
+  recipient: string,
+  profile: PublicProfileResponse
+): Promise<KeeperhubExecuteResult> {
+  if (!isAgenticWalletConfigured()) {
+    throw new Error(
+      "Sponsored attestation requires KEEPERHUB_WALLET_PRIVATE_KEY to be configured."
+    );
+  }
+
+  const workflowId = process.env.KEEPERHUB_ATTEST_WORKFLOW_ID;
+  if (!workflowId) {
+    throw new Error(
+      "KEEPERHUB_ATTEST_WORKFLOW_ID is not set. Create the attest workflow in " +
+        "the KeeperHub dashboard and set its ID here."
+    );
+  }
+
+  const { easContractAddress, schemaUID } = EAS_CONFIG.sepolia;
+  if (!schemaUID) {
+    throw new Error("EAS schema UID not configured.");
+  }
+
+  const encodedData = encodeAttestationData(profile);
+
+  logger.info("[eas] Submitting sponsored attestation via KeeperHub", {
+    recipient,
+    score: profile.score,
+  });
+
+  const result = await executeWorkflow(workflowId, {
+    easContractAddress,
+    schemaUID,
+    recipient,
+    encodedData,
+    expirationTime: NO_EXPIRATION.toString(),
+    revocable: true,
+    refUID: ethers.ZeroHash,
+  });
+
+  logger.info("[eas] Sponsored attestation submitted", {
+    recipient,
+    txHash: result.txHash ?? null,
+  });
+
+  return result;
 }

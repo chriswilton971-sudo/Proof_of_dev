@@ -59,6 +59,10 @@ export class AppError extends Error {
     return new AppError("INTERNAL_ERROR", detail, 500);
   }
 
+  static sponsorshipUnavailable(detail?: string) {
+    return new AppError("SPONSORSHIP_UNAVAILABLE", detail, 503);
+  }
+
   static profileNotFound(detail?: string) {
     return new AppError("PROFILE_NOT_FOUND", detail, 404);
   }

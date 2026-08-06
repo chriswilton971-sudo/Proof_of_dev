@@ -63,6 +63,10 @@ export class AppError extends Error {
     return new AppError("SPONSORSHIP_UNAVAILABLE", detail, 503);
   }
 
+  static sponsorshipNotSupported(detail?: string) {
+    return new AppError("SPONSORSHIP_NOT_SUPPORTED", detail, 501);
+  }
+
   static profileNotFound(detail?: string) {
     return new AppError("PROFILE_NOT_FOUND", detail, 404);
   }

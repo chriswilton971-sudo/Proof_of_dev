@@ -1,38 +1,27 @@
 /**
- * KeeperHub MCP/REST client (apps/web side).
+ * KeeperHub Direct Execution API client (apps/web side).
  *
- * Mirrors services/analysis/keeperhub.js so both apps read the same env
- * vars and behave the same way. This client is what the *sponsored*
- * (opt-in, gasless-for-the-user) attestation and mint paths use — the
- * default user-pays-gas paths are untouched and don't import this file.
+ * Matches the real API at https://docs.keeperhub.com/api/direct-execution.
+ * Mirrors services/analysis/keeperhub.js so both apps behave the same way.
  *
- * IMPORTANT: KEEPERHUB_WALLET_PRIVATE_KEY is read from process.env only,
- * server-side. It is never logged, never returned in an API response, and
- * never sent to the client. Set it via your host's secret manager
- * (Vercel/Next env, GitHub Actions secrets, Replit Secrets) — never commit
- * a real value.
+ * Auth is a single `kh_` organization API key. KeeperHub custodies the
+ * signing wallet server-side (Turnkey enclave, configured in KeeperHub's
+ * own dashboard under Wallet Management) -- this app never holds, receives,
+ * or transmits a private key for it.
  *
  * See docs/integrations/keeperhub-mcp.md.
  */
 
+import { randomUUID } from "node:crypto";
 import { logger } from "@/lib/logger";
 
 const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com";
 const KEEPERHUB_API_KEY = process.env.KEEPERHUB_API_KEY ?? "";
-const KEEPERHUB_AUDIT_WEBHOOK = process.env.KEEPERHUB_AUDIT_WEBHOOK ?? "";
-
-// "dual" | "x402" | "mpp" — dual lets KeeperHub auto-select per call.
-const KEEPERHUB_PAYMENT_MODE = process.env.KEEPERHUB_PAYMENT_MODE ?? "x402";
-
-const KEEPERHUB_PAYMENT_PREF = (process.env.KEEPERHUB_PAYMENT_PREF ?? "x402,mpp")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 function isPlaceholder(val: string | undefined): boolean {
   if (!val || !val.trim()) return true;
   const v = val.trim();
-  return v.includes("your_") || v.includes("_here") || /^0x0+$/.test(v);
+  return v.includes("your_") || v.includes("_here");
 }
 
 /** True when KEEPERHUB_API_KEY isn't set to a real value yet. */
@@ -40,109 +29,131 @@ export function isKeeperhubConfigured(): boolean {
   return !isPlaceholder(KEEPERHUB_API_KEY);
 }
 
-/**
- * True when a wallet key is present for autonomous signing. Never returns
- * or logs the key itself — callers should only ever check this boolean.
- * Used to gate the sponsored (opt-in) submission paths: if this is false,
- * those endpoints fail closed rather than silently falling back to
- * anything that could touch a real key.
- */
-export function isAgenticWalletConfigured(): boolean {
-  return !isPlaceholder(process.env.KEEPERHUB_WALLET_PRIVATE_KEY);
-}
-
-interface AuditEvent {
-  stage: "trigger" | "outcome";
-  workflowId: string;
-  [key: string]: unknown;
-}
-
-/** Best-effort audit log post. Never blocks or throws for the caller. */
-export async function logAuditEvent(event: AuditEvent): Promise<void> {
-  if (!KEEPERHUB_AUDIT_WEBHOOK) return;
-  try {
-    await fetch(KEEPERHUB_AUDIT_WEBHOOK, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ timestamp: new Date().toISOString(), ...event }),
-    });
-  } catch (err) {
-    logger.warn("[keeperhub] audit webhook failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-export interface KeeperhubExecuteResult {
-  txHash?: string;
-  gasUsed?: string;
-  protocol?: "x402" | "mpp";
-  [key: string]: unknown;
-}
-
-/**
- * Submit a workflow execution to KeeperHub, letting it route the payment
- * over x402 or MPP per KEEPERHUB_PAYMENT_MODE, and audit-logs trigger +
- * outcome regardless of success/failure.
- *
- * Throws if the agentic wallet isn't configured — sponsored submission
- * must fail closed, never silently no-op or fall back to something else.
- */
-export async function executeWorkflow(
-  workflowId: string,
-  input: Record<string, unknown>
-): Promise<KeeperhubExecuteResult> {
+async function keeperhubRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!isKeeperhubConfigured()) {
     throw new Error("KEEPERHUB_API_KEY is not configured");
   }
-  if (!isAgenticWalletConfigured()) {
+
+  const res = await fetch(`${KEEPERHUB_BASE_URL}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${KEEPERHUB_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(init.headers ?? {}),
+    },
+  });
+
+  const body = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
     throw new Error(
-      "KEEPERHUB_WALLET_PRIVATE_KEY is not configured — refusing to submit " +
-        "a sponsored transaction without a signing key."
+      `KeeperHub request failed: ${res.status} ${(body as { error?: string }).error ?? res.statusText}`
     );
   }
 
-  const paymentMode =
-    KEEPERHUB_PAYMENT_MODE === "dual"
-      ? { mode: "dual", preference: KEEPERHUB_PAYMENT_PREF }
-      : { mode: KEEPERHUB_PAYMENT_MODE };
+  return body as T;
+}
 
-  await logAuditEvent({ stage: "trigger", workflowId, paymentMode });
+export interface ContractCallParams {
+  contractAddress: string;
+  chainId: number;
+  functionName: string;
+  functionArgs?: unknown[];
+  abi?: string;
+  value?: string;
+}
 
-  try {
-    const res = await fetch(`${KEEPERHUB_BASE_URL}/v1/workflows/${workflowId}/execute`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${KEEPERHUB_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ input, payment: paymentMode }),
-    });
+interface SimulateResponse {
+  success: boolean;
+  status: string;
+  wouldRevert: boolean;
+  revertReason?: string;
+  result?: unknown;
+}
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      throw new Error(`KeeperHub execute failed: ${res.status} ${text}`.trim());
-    }
+interface BroadcastResponse {
+  executionId?: string;
+  status?: string;
+  result?: unknown;
+}
+export type ContractCallResult = ExecutionStatus | BroadcastResponse;
 
-    const result = (await res.json()) as KeeperhubExecuteResult;
+export interface ExecutionStatus {
+  executionId: string;
+  status: "pending" | "running" | "completed" | "failed";
+  transactionHash?: string;
+  transactionLink?: string;
+  sponsored?: boolean;
+  error?: string | null;
+  [key: string]: unknown;
+}
 
-    await logAuditEvent({
-      stage: "outcome",
-      workflowId,
-      status: "success",
-      txHash: result.txHash ?? null,
-      gasUsed: result.gasUsed ?? null,
-      protocolUsed: result.protocol ?? null,
-    });
+/**
+ * Call a smart contract function via KeeperHub's org wallet, following the
+ * documented safe first-write sequence: simulate, then broadcast with an
+ * idempotency key, then poll status. Throws on a would-revert simulate or
+ * a failed execution.
+ */
+export async function executeContractCall(
+  params: ContractCallParams,
+  opts: { pollIntervalMs?: number; maxPolls?: number } = {}
+): Promise<ContractCallResult> {
+  const body = {
+    contractAddress: params.contractAddress,
+    chainId: params.chainId,
+    functionName: params.functionName,
+    functionArgs: JSON.stringify(params.functionArgs ?? []),
+    ...(params.abi ? { abi: params.abi } : {}),
+    ...(params.value ? { value: params.value } : {}),
+  };
 
-    return result;
-  } catch (err) {
-    await logAuditEvent({
-      stage: "outcome",
-      workflowId,
-      status: "error",
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw err;
+  logger.info("[keeperhub] Simulating contract call", {
+    contractAddress: params.contractAddress,
+    functionName: params.functionName,
+  });
+
+  const sim = await keeperhubRequest<SimulateResponse>("/api/execute/contract-call", {
+    method: "POST",
+    body: JSON.stringify({ ...body, simulate: true }),
+  });
+
+  if (sim.wouldRevert) {
+    throw new Error(`KeeperHub simulation would revert: ${sim.revertReason ?? "unknown reason"}`);
   }
+
+  logger.info("[keeperhub] Broadcasting contract call", {
+    contractAddress: params.contractAddress,
+    functionName: params.functionName,
+  });
+
+  const broadcastResult = await keeperhubRequest<BroadcastResponse>("/api/execute/contract-call", {
+    method: "POST",
+    headers: { "Idempotency-Key": randomUUID() },
+    body: JSON.stringify(body),
+  });
+
+  if (!broadcastResult.executionId) {
+    return broadcastResult;
+  }
+
+  return pollExecutionStatus(broadcastResult.executionId, opts);
+}
+
+async function pollExecutionStatus(
+  executionId: string,
+  { pollIntervalMs = 2000, maxPolls = 30 }: { pollIntervalMs?: number; maxPolls?: number }
+): Promise<ExecutionStatus> {
+  for (let i = 0; i < maxPolls; i++) {
+    const status = await keeperhubRequest<ExecutionStatus>(`/api/execute/${executionId}/status`, {
+      method: "GET",
+    });
+    if (status.status === "completed" || status.status === "failed") {
+      if (status.status === "failed") {
+        throw new Error(`KeeperHub execution ${executionId} failed: ${status.error ?? "unknown error"}`);
+      }
+      return status;
+    }
+    await new Promise((r) => setTimeout(r, pollIntervalMs));
+  }
+  throw new Error(`KeeperHub execution ${executionId} did not complete within ${maxPolls} polls`);
 }

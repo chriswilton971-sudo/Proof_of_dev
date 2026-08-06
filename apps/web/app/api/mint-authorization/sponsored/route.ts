@@ -1,47 +1,30 @@
 /**
  * POST /api/mint-authorization/sponsored
  *
- * Opt-in alternative to POST /api/mint-authorization. Instead of returning
- * a signature for the user's own wallet to submit as mint(), this submits
- * the mint transaction on-chain directly via KeeperHub's agentic wallet
- * (gas paid by KeeperHub, settled over x402/MPP).
+ * NOT IMPLEMENTED. Always returns 501 SPONSORSHIP_NOT_SUPPORTED.
  *
- * Separate endpoint by design — the default stays non-custodial, and
- * sponsorship only happens when a caller explicitly hits this route.
+ * ProofOfDev.mint() uses msg.sender as the recipient (see
+ * contracts/ProofOfDev.sol), so a KeeperHub-submitted call would mint the
+ * NFT to KeeperHub's wallet instead of the caller's. See the comment on
+ * submitSponsoredMint() in lib/mint/mintAuthorizationService.ts for what
+ * a contract change to support this would look like.
  *
- * Body: { address: string }
- * Response: { txHash?: string, ... } — whatever KeeperHub's execute
- * response contains. 503 SPONSORSHIP_UNAVAILABLE if KeeperHub isn't
- * configured; the caller should fall back to POST /api/mint-authorization.
+ * This route exists (rather than being omitted) so the frontend has a
+ * stable endpoint to call and gets back a clear, typed error instead of a
+ * 404 — callers should fall back to POST /api/mint-authorization.
  */
 
-import { NextRequest, NextResponse } from "next/server";
-import { submitSponsoredMint } from "@/lib/mint/mintAuthorizationService";
-import { isAgenticWalletConfigured } from "@/lib/keeperhub/client";
 import { handleApiError } from "@/lib/errors/errorHandler";
 import { AppError } from "@/lib/errors/AppError";
 
 export const runtime = "nodejs";
 
-const ETH_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
-
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
-    if (!isAgenticWalletConfigured()) {
-      throw AppError.sponsorshipUnavailable(
-        "KEEPERHUB_WALLET_PRIVATE_KEY is not configured"
-      );
-    }
-
-    const body = await req.json();
-    const { address } = body as { address?: unknown };
-
-    if (typeof address !== "string" || !ETH_ADDRESS_RE.test(address)) {
-      throw AppError.invalidAddress("address must be a valid Ethereum address");
-    }
-
-    const result = await submitSponsoredMint(address);
-    return NextResponse.json(result);
+    throw AppError.sponsorshipNotSupported(
+      "ProofOfDev.mint() uses msg.sender as the recipient; sponsoring this call " +
+        "would mint to KeeperHub's wallet, not the user's. Requires a contract change."
+    );
   } catch (err) {
     return handleApiError(err);
   }

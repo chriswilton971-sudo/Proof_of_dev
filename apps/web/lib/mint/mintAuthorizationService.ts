@@ -24,7 +24,6 @@ import { ethers } from "ethers";
 import { CONTRACT_ADDRESS } from "@/lib/contract";
 import { fetchCanonicalProfile } from "@/lib/api/canonicalProfile";
 import { logger } from "@/lib/logger";
-import { executeWorkflow, isAgenticWalletConfigured, KeeperhubExecuteResult } from "@/lib/keeperhub/client";
 
 // Sepolia — the only network the ProofOfDev NFT is deployed on today.
 const MINT_CHAIN_ID = 11155111;
@@ -121,58 +120,35 @@ export async function createMintAuthorization(
 // ─── Sponsored (opt-in, gasless-for-the-user) submission ──────────────────────
 
 /**
- * Opt-in alternative to createMintAuthorization(): instead of returning a
- * signature for the user's own wallet to submit as mint(), this routes the
- * mint call through KeeperHub's agentic wallet, which pays gas and submits
- * on the user's behalf (settled via x402/MPP).
+ * NOT IMPLEMENTED — see reasoning below before wiring this up.
  *
- * The default createMintAuthorization() flow above is untouched and stays
- * the default — this only runs on explicit opt-in (see
- * POST /api/mint-authorization/sponsored) and only when
- * KEEPERHUB_WALLET_PRIVATE_KEY is configured; otherwise it throws.
+ * ProofOfDev.mint() uses msg.sender as the recipient (`_tokens[msg.sender]`),
+ * not an explicit parameter — see contracts/ProofOfDev.sol. If KeeperHub's
+ * org wallet called mint() on a user's behalf, the NFT would be minted to
+ * KeeperHub's wallet, not the user's. There is no safe way to sponsor this
+ * specific call against the currently deployed contract.
  *
- * This still signs the same EIP-712 MintAuthorization the contract expects
- * (the contract's trustedSigner check doesn't care who submits the tx, only
- * who signed the authorization) — KeeperHub is just the submitter, not a
- * replacement for MINT_SIGNER_PRIVATE_KEY.
+ * To actually support sponsored minting, the contract needs a variant like:
  *
- * KEEPERHUB_MINT_WORKFLOW_ID must point at a workflow configured in the
- * KeeperHub dashboard that calls ProofOfDev.mint(recipient, score,
- * contractCount, verifiedContractCount, hasENS, deadline, signature).
+ *   function mintFor(address recipient, uint256 score, ...) external {
+ *       if (_tokens[recipient] != 0) revert AlreadyMinted();
+ *       _authorize(MINT_TYPEHASH, recipient, score, ...); // bind recipient into the signed hash
+ *       ...
+ *       _mint(recipient, tokenId);
+ *   }
+ *
+ * which also means the EIP-712 typed-data struct createMintAuthorization()
+ * signs needs a `recipient` field added to MINT_TYPEHASH, so a signed
+ * authorization can't be replayed for a different recipient. That's a
+ * contract + redeploy + re-signing-service change, not just API wiring —
+ * flagging it rather than shipping a call that would silently mint to the
+ * wrong address.
  */
-export async function submitSponsoredMint(address: string): Promise<KeeperhubExecuteResult> {
-  if (!isAgenticWalletConfigured()) {
-    throw new Error(
-      "Sponsored mint requires KEEPERHUB_WALLET_PRIVATE_KEY to be configured."
-    );
-  }
-
-  const workflowId = process.env.KEEPERHUB_MINT_WORKFLOW_ID;
-  if (!workflowId) {
-    throw new Error(
-      "KEEPERHUB_MINT_WORKFLOW_ID is not set. Create the mint workflow in " +
-        "the KeeperHub dashboard and set its ID here."
-    );
-  }
-
-  // Reuses the exact same signed authorization the user-pays flow produces —
-  // the trustedSigner check on-chain is about who signed, not who submits.
-  const authorization = await createMintAuthorization(address);
-
-  logger.info("[mint] Submitting sponsored mint via KeeperHub", {
-    recipient: address.toLowerCase(),
-  });
-
-  const result = await executeWorkflow(workflowId, {
-    contractAddress: CONTRACT_ADDRESS,
-    recipient: address.toLowerCase(),
-    ...authorization,
-  });
-
-  logger.info("[mint] Sponsored mint submitted", {
-    recipient: address.toLowerCase(),
-    txHash: result.txHash ?? null,
-  });
-
-  return result;
+export async function submitSponsoredMint(): Promise<never> {
+  throw new Error(
+    "Sponsored mint is not supported: ProofOfDev.mint() uses msg.sender as the " +
+      "recipient, so a KeeperHub-submitted call would mint to KeeperHub's wallet " +
+      "instead of the user's. Requires a contract change (see comment above) " +
+      "before this can be wired up. Use POST /api/mint-authorization instead."
+  );
 }

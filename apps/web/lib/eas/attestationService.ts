@@ -21,7 +21,7 @@ import { ethers } from "ethers";
 import { EAS_CONFIG } from "./config";
 import { PublicProfileResponse } from "@/lib/types";
 import { logger } from "@/lib/logger";
-import { executeWorkflow, isAgenticWalletConfigured, KeeperhubExecuteResult } from "@/lib/keeperhub/client";
+import { executeContractCall, ContractCallResult, ExecutionStatus } from "@/lib/keeperhub/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -136,41 +136,27 @@ export async function createDelegatedAttestation(
 
 // ─── Sponsored (opt-in, gasless-for-the-user) submission ──────────────────────
 
+const SEPOLIA_CHAIN_ID = 11155111;
+
 /**
  * Opt-in alternative to createDelegatedAttestation(): instead of returning a
- * signature for the user's own wallet to submit, this routes the attestation
- * through KeeperHub's agentic wallet, which pays gas and submits the
- * transaction on the user's behalf (settled via x402/MPP).
+ * signature for the user's own wallet to submit, this calls EAS's attest()
+ * directly through KeeperHub's Direct Execution API — KeeperHub's org
+ * wallet pays gas and submits the transaction. No delegation dance needed:
+ * EAS's attest() takes `recipient` as an explicit field, so (unlike mint(),
+ * see mintAuthorizationService.ts) there's no msg.sender ambiguity here —
+ * whoever submits the tx, the attestation still goes to the right recipient.
  *
- * The default createDelegatedAttestation() flow above is untouched and stays
- * the default — this only runs when a caller explicitly opts in (see
- * POST /api/attest/sponsored) and only when KEEPERHUB_WALLET_PRIVATE_KEY is
- * actually configured; otherwise it throws rather than silently falling
- * back to some other signer.
+ * The default createDelegatedAttestation() flow above is untouched — this
+ * only runs when a caller explicitly opts in (see POST /api/attest/sponsored).
  *
- * KEEPERHUB_ATTEST_WORKFLOW_ID must point at a workflow configured in the
- * KeeperHub dashboard that knows how to build and submit an EAS attest()
- * call from these fields — this function does not encode calldata itself,
- * it hands KeeperHub the same data createDelegatedAttestation() would sign.
+ * `abi` is omitted from the KeeperHub call; EAS on Sepolia is a verified
+ * contract, so KeeperHub auto-fetches the ABI from the block explorer.
  */
 export async function submitSponsoredAttestation(
   recipient: string,
   profile: PublicProfileResponse
-): Promise<KeeperhubExecuteResult> {
-  if (!isAgenticWalletConfigured()) {
-    throw new Error(
-      "Sponsored attestation requires KEEPERHUB_WALLET_PRIVATE_KEY to be configured."
-    );
-  }
-
-  const workflowId = process.env.KEEPERHUB_ATTEST_WORKFLOW_ID;
-  if (!workflowId) {
-    throw new Error(
-      "KEEPERHUB_ATTEST_WORKFLOW_ID is not set. Create the attest workflow in " +
-        "the KeeperHub dashboard and set its ID here."
-    );
-  }
-
+): Promise<ContractCallResult> {
   const { easContractAddress, schemaUID } = EAS_CONFIG.sepolia;
   if (!schemaUID) {
     throw new Error("EAS schema UID not configured.");
@@ -183,19 +169,28 @@ export async function submitSponsoredAttestation(
     score: profile.score,
   });
 
-  const result = await executeWorkflow(workflowId, {
-    easContractAddress,
-    schemaUID,
-    recipient,
-    encodedData,
-    expirationTime: NO_EXPIRATION.toString(),
-    revocable: true,
-    refUID: ethers.ZeroHash,
+  const result = await executeContractCall({
+    contractAddress: easContractAddress,
+    chainId: SEPOLIA_CHAIN_ID,
+    functionName: "attest",
+    functionArgs: [
+      {
+        schema: schemaUID,
+        data: {
+          recipient,
+          expirationTime: 0,
+          revocable: true,
+          refUID: ethers.ZeroHash,
+          data: encodedData,
+          value: 0,
+        },
+      },
+    ],
   });
 
   logger.info("[eas] Sponsored attestation submitted", {
     recipient,
-    txHash: result.txHash ?? null,
+    txHash: (result as ExecutionStatus).transactionHash ?? null,
   });
 
   return result;

@@ -46,9 +46,21 @@ const recommended = [
   "MINT_SIGNER_PRIVATE_KEY",
 ];
 
+// Not required to run the app (demo mode works without these), but required
+// for the one thing that actually matters for hackathon submission: a real
+// transaction executed through KeeperHub. Checked separately and loudly so
+// "check-env OK" never gives false confidence about this specific path.
+const keeperhub = [
+  { key: "KEEPERHUB_API_KEY", hint: "app.keeperhub.com → Settings → API Keys" },
+  { key: "KEEPERHUB_WALLET_PRIVATE_KEY", hint: "agentic signing wallet, must be/be delegated by contract owner" },
+  { key: "KEEPERHUB_MARKVERIFIED_WORKFLOW_ID", hint: "workflow ID from the KeeperHub dashboard that calls markVerified(tokenId)" },
+  { key: "KEEPERHUB_WEBHOOK_SECRET", hint: "any random value — gates /webhooks/keeperhub/post-mint" },
+];
+
 function isMissingKey(key) {
   const val = process.env[key];
-  return !val || val.includes("your_") || val.includes("_here");
+  if (!val) return true;
+  return val.includes("your_") || val.includes("_here") || /^0x0+$/.test(val.trim());
 }
 
 const demoMode = isMockMode();
@@ -74,6 +86,21 @@ for (const key of recommended) {
 
 if (!existsSync(resolve(root, ".env.local"))) {
   console.warn("[check-env] No .env.local — demo mode uses sample analysis data");
+}
+
+const keeperhubMissing = keeperhub.filter(({ key }) => isMissingKey(key));
+if (keeperhubMissing.length > 0) {
+  console.warn("");
+  console.warn("[check-env] ⚠ KeeperHub is NOT fully configured — no real transaction");
+  console.warn("            can be executed through KeeperHub until these are set:");
+  for (const { key, hint } of keeperhubMissing) {
+    console.warn(`              - ${key}  (${hint})`);
+  }
+  console.warn("            This is the one hackathon requirement — set these before");
+  console.warn("            recording your demo or fetching a submission tx link.");
+  console.warn("");
+} else {
+  console.info("[check-env] ✓ KeeperHub fully configured — ready to run npm run demo:keeperhub");
 }
 
 if (failed) {

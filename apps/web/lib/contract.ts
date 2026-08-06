@@ -61,6 +61,17 @@ export const CONTRACT_ABI = [
     stateMutability: "view",
     type: "function",
   },
+  {
+    // Set by KeeperHub's markVerified(tokenId) follow-up workflow — see
+    // services/analysis/keeperhub.js and the "KeeperHub post-mint
+    // automation" section of the README. Polled by MintButton to show the
+    // "Verified via KeeperHub" badge once the follow-up transaction lands.
+    inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }],
+    name: "isVerified",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    stateMutability: "view",
+    type: "function",
+  },
   // Write
   {
     inputs: [

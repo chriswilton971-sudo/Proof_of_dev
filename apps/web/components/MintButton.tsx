@@ -7,6 +7,7 @@ import {
   useWaitForTransactionReceipt,
   useChainId,
   useSwitchChain,
+  useReadContract,
 } from "wagmi";
 import { sepolia } from "wagmi/chains";
 import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
@@ -46,22 +47,72 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
 
   if (isMinted && step !== "done") setStep("done");
 
+  // "idle" -> "triggering" -> "triggered" (KeeperHub accepted the workflow)
+  // -> "verified" (on-chain isVerified() confirms markVerified() landed).
+  // "error" covers both a failed trigger and a configured-but-unreachable
+  // deployment (503 from the worker when KeeperHub isn't set up).
+  const [keeperhubState, setKeeperhubState] = useState<
+    "idle" | "triggering" | "triggered" | "verified" | "error"
+  >("idle");
+  const [keeperhubTxHash, setKeeperhubTxHash] = useState<string | null>(null);
+
   // Fire the KeeperHub post-mint follow-up once the mint is confirmed.
-  // Best-effort and non-blocking: the mint itself already succeeded
-  // on-chain by this point, so a KeeperHub hiccup here never surfaces as
-  // a mint failure to the user — see /api/mint-verify.
+  // The mint itself already succeeded on-chain by this point, so this
+  // trigger is tracked separately in its own badge rather than gating the
+  // "Minted!" success state — see /api/mint-verify.
   const keeperhubTriggered = useRef(false);
   useEffect(() => {
     if (!isMinted || !txHash || keeperhubTriggered.current) return;
     keeperhubTriggered.current = true;
+    setKeeperhubState("triggering");
     fetch("/api/mint-verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ txHash }),
-    }).catch((err) => {
-      console.warn("[mint] KeeperHub post-mint trigger failed:", err);
-    });
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.status !== "triggered") {
+          console.warn("[mint] KeeperHub post-mint trigger failed:", data);
+          setKeeperhubState("error");
+          return;
+        }
+        setKeeperhubTxHash(data.txHash ?? null);
+        setKeeperhubState("triggered");
+      })
+      .catch((err) => {
+        console.warn("[mint] KeeperHub post-mint trigger failed:", err);
+        setKeeperhubState("error");
+      });
   }, [isMinted, txHash]);
+
+  // Ground truth: once KeeperHub says it triggered the workflow, poll the
+  // contract directly for isVerified(tokenId) rather than trusting the
+  // trigger response alone — this is the actual on-chain effect landing.
+  const { data: tokenId } = useReadContract({
+    address: CONTRACT_ADDRESS as `0x${string}`,
+    abi: CONTRACT_ABI,
+    functionName: "getTokenByAddress",
+    args: [address as `0x${string}`],
+    query: { enabled: keeperhubState === "triggered" },
+  });
+
+  const { data: isVerifiedOnChain } = useReadContract({
+    address: CONTRACT_ADDRESS as `0x${string}`,
+    abi: CONTRACT_ABI,
+    functionName: "isVerified",
+    args: tokenId !== undefined ? [tokenId] : undefined,
+    query: {
+      enabled: keeperhubState === "triggered" && tokenId !== undefined && tokenId > 0n,
+      refetchInterval: 4000,
+    },
+  });
+
+  useEffect(() => {
+    if (isVerifiedOnChain === true && keeperhubState === "triggered") {
+      setKeeperhubState("verified");
+    }
+  }, [isVerifiedOnChain, keeperhubState]);
 
   async function handleConfirmMint() {
     setMintError(null);
@@ -142,6 +193,9 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
             View transaction ↗
           </a>
         )}
+
+        <KeeperHubBadge state={keeperhubState} txHash={keeperhubTxHash} />
+
         <p className="text-xs text-slate-600 mt-4">
           This NFT reflects on-chain activity only and does not certify developer skill.
         </p>
@@ -344,6 +398,61 @@ function MetaRow({
     <div className="flex items-center justify-between gap-4">
       <span className="text-sm text-slate-500">{label}</span>
       {valueNode ?? <span className="text-sm text-slate-200 font-medium">{value}</span>}
+    </div>
+  );
+}
+
+// Surfaces the post-mint KeeperHub follow-up in the UI itself, not just the
+// README — the mint above is signed by the user's own wallet; this badge is
+// the actual agent-executed, KeeperHub-routed on-chain step
+// (markVerified(tokenId), see services/analysis/keeperhub.js).
+function KeeperHubBadge({
+  state,
+  txHash,
+}: {
+  state: "idle" | "triggering" | "triggered" | "verified" | "error";
+  txHash: string | null;
+}) {
+  if (state === "idle") return null;
+
+  if (state === "error") {
+    return (
+      <div className="mt-4 inline-flex items-center gap-1.5 text-xs text-slate-600">
+        <span className="w-1.5 h-1.5 rounded-full bg-slate-600" />
+        KeeperHub follow-up unavailable
+      </div>
+    );
+  }
+
+  const isDone = state === "verified";
+  const label =
+    state === "triggering"
+      ? "Requesting KeeperHub follow-up…"
+      : state === "triggered"
+        ? "Verifying via KeeperHub…"
+        : "Verified via KeeperHub";
+
+  return (
+    <div className="mt-4 inline-flex items-center gap-1.5 text-xs">
+      <span
+        className={`w-1.5 h-1.5 rounded-full ${
+          isDone ? "bg-emerald-400" : "bg-indigo-400 animate-pulse"
+        }`}
+      />
+      <span className={isDone ? "text-emerald-400 font-medium" : "text-slate-400"}>
+        {label}
+        {isDone && " ✓"}
+      </span>
+      {isDone && txHash && (
+        <a
+          href={`https://sepolia.etherscan.io/tx/${txHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-indigo-400 hover:text-indigo-300 transition-colors"
+        >
+          View tx ↗
+        </a>
+      )}
     </div>
   );
 }

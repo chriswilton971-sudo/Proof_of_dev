@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   useAccount,
   useWriteContract,
@@ -45,6 +45,23 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
     useWaitForTransactionReceipt({ hash: txHash });
 
   if (isMinted && step !== "done") setStep("done");
+
+  // Fire the KeeperHub post-mint follow-up once the mint is confirmed.
+  // Best-effort and non-blocking: the mint itself already succeeded
+  // on-chain by this point, so a KeeperHub hiccup here never surfaces as
+  // a mint failure to the user — see /api/mint-verify.
+  const keeperhubTriggered = useRef(false);
+  useEffect(() => {
+    if (!isMinted || !txHash || keeperhubTriggered.current) return;
+    keeperhubTriggered.current = true;
+    fetch("/api/mint-verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ txHash }),
+    }).catch((err) => {
+      console.warn("[mint] KeeperHub post-mint trigger failed:", err);
+    });
+  }, [isMinted, txHash]);
 
   async function handleConfirmMint() {
     setMintError(null);

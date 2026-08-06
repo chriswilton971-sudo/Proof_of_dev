@@ -6,6 +6,8 @@
  *   GET  /result/:jobId     — poll for job result (stored in MongoDB)
  *   GET  /profile/:address  — fetch the latest stored result from MongoDB
  *   GET  /health            — health check
+ *   POST /webhooks/keeperhub/post-mint — verify a Minted tx, then trigger
+ *                              the KeeperHub markVerified() follow-up workflow
  *
  * Hot-path transport: ZeroMQ push socket bound on QUEUE_ENDPOINT.
  * The worker process connects a pull socket to the same port and processes
@@ -21,6 +23,13 @@ import { getPush, closePush, isPushBound } from "./push.js";
 import { getLatestResult, getJobResult, saveJobProgress, saveJobResult, ensureIndexes } from "./db.js";
 import { chainIdFromNetwork, networkFromChainId, isMockMode } from "./config.js";
 import { listenForJobUpdates } from "./resultsChannel.js";
+import { verifyMintedEvent } from "./chain-data/mintEvents.js";
+import {
+  isKeeperhubConfigured,
+  isAgenticWalletConfigured,
+  triggerPostMintVerification,
+  KEEPERHUB_WEBHOOK_SECRET,
+} from "./keeperhub.js";
 
 const app  = express();
 const PORT = parseInt(process.env.PORT ?? "8000", 10);
@@ -266,6 +275,72 @@ app.get("/health", async (_req, res) => {
     uptime: Math.floor(process.uptime()),
     mock_mode: isMockMode(),
   });
+});
+
+/**
+ * POST /webhooks/keeperhub/post-mint
+ *
+ * Body: { txHash, contractAddress, network }
+ *
+ * Called after a client confirms a mint() transaction. We independently
+ * verify the Minted event against Etherscan (never trust tokenId/account
+ * from the caller directly — this route triggers a real, gas-spending
+ * KeeperHub workflow) and, once confirmed, ask KeeperHub to execute the
+ * markVerified(tokenId) follow-up via executeWorkflow().
+ *
+ * Requires header `x-webhook-secret` matching KEEPERHUB_WEBHOOK_SECRET.
+ */
+app.post("/webhooks/keeperhub/post-mint", async (req, res) => {
+  if (!KEEPERHUB_WEBHOOK_SECRET || req.get("x-webhook-secret") !== KEEPERHUB_WEBHOOK_SECRET) {
+    return res.status(401).json({ error: "Missing or invalid x-webhook-secret" });
+  }
+
+  const { txHash, contractAddress, network = "sepolia" } = req.body ?? {};
+
+  if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+    return res.status(400).json({ error: "Invalid txHash" });
+  }
+  if (!contractAddress || !ETH_ADDRESS_RE.test(contractAddress)) {
+    return res.status(400).json({ error: "Invalid contractAddress" });
+  }
+  if (!ALLOWED_NETWORKS.has(network)) {
+    return res.status(400).json({
+      error: `network must be one of: ${[...ALLOWED_NETWORKS].join(", ")}`,
+    });
+  }
+
+  if (!isKeeperhubConfigured() || !isAgenticWalletConfigured()) {
+    return res.status(503).json({
+      error: "KeeperHub automation is not configured on this deployment",
+      hint: "Set KEEPERHUB_API_KEY and KEEPERHUB_WALLET_PRIVATE_KEY to enable it.",
+    });
+  }
+
+  try {
+    const chainId = chainIdFromNetwork(network);
+    const { found, tokenId, account } = await verifyMintedEvent({
+      txHash,
+      contractAddress,
+      chainId,
+    });
+
+    if (!found) {
+      return res.status(404).json({ error: "No Minted event found for this transaction" });
+    }
+
+    const result = await triggerPostMintVerification({ tokenId, account, mintTxHash: txHash });
+
+    return res.status(202).json({
+      status: "triggered",
+      tokenId,
+      account,
+      protocolUsed: result?.protocol ?? null,
+      txHash: result?.txHash ?? null,
+    });
+  } catch (err) {
+    console.error("[api] KeeperHub post-mint webhook failed:", err.message);
+    return res.status(502).json({ error: "KeeperHub workflow execution failed", detail: err.message });
+  }
 });
 
 // ─── Start ────────────────────────────────────────────────────────────────────

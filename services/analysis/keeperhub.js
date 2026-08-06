@@ -20,6 +20,17 @@ export const KEEPERHUB_MCP_URL       = process.env.KEEPERHUB_MCP_URL ?? `${KEEPE
 export const KEEPERHUB_API_KEY       = process.env.KEEPERHUB_API_KEY ?? "";
 export const KEEPERHUB_AUDIT_WEBHOOK = process.env.KEEPERHUB_AUDIT_WEBHOOK ?? "";
 
+// KeeperHub workflow ID that calls ProofOfDev.markVerified(tokenId) as the
+// post-mint follow-up step (see contracts/ProofOfDev.sol). Configure this
+// once you've created the workflow in the KeeperHub dashboard/API.
+export const KEEPERHUB_MARKVERIFIED_WORKFLOW_ID =
+  process.env.KEEPERHUB_MARKVERIFIED_WORKFLOW_ID ?? "";
+
+// Shared secret the caller of POST /webhooks/keeperhub/post-mint must send
+// back as `x-webhook-secret`. This gates a route that spends real gas via an
+// autonomous wallet — never leave it unset outside local/mock development.
+export const KEEPERHUB_WEBHOOK_SECRET = process.env.KEEPERHUB_WEBHOOK_SECRET ?? "";
+
 // "dual" | "x402" | "mpp" — dual lets KeeperHub auto-select per call.
 export const KEEPERHUB_PAYMENT_MODE = process.env.KEEPERHUB_PAYMENT_MODE ?? "x402";
 
@@ -138,4 +149,30 @@ export async function executeWorkflow({ workflowId, input }) {
     });
     throw err;
   }
+}
+
+/**
+ * The actual post-mint automation: after a Minted event is confirmed
+ * on-chain (see chain-data/mintEvents.js — callers must verify this before
+ * calling here), route a markVerified(tokenId) execution request through
+ * KeeperHub via executeWorkflow().
+ *
+ * This is the one place in the app that turns "we saw a mint" into "we
+ * asked KeeperHub to land a follow-up transaction" — the whole point of
+ * the KeeperHub integration.
+ *
+ * @param {{ tokenId: string, account: string, mintTxHash: string }} params
+ */
+export async function triggerPostMintVerification({ tokenId, account, mintTxHash }) {
+  if (!KEEPERHUB_MARKVERIFIED_WORKFLOW_ID) {
+    throw new Error(
+      "KEEPERHUB_MARKVERIFIED_WORKFLOW_ID is not configured — create the " +
+      "markVerified workflow in KeeperHub and set its ID before calling this.",
+    );
+  }
+
+  return executeWorkflow({
+    workflowId: KEEPERHUB_MARKVERIFIED_WORKFLOW_ID,
+    input: { tokenId, account, mintTxHash },
+  });
 }

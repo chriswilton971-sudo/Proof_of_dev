@@ -83,6 +83,9 @@ jobs:
       - name: Run scoring parity tests
         run: npm run test:scoring
 
+      - name: Run KeeperHub client tests
+        run: npm run test:keeperhub
+
       - name: Build web app
         run: npm run build
 

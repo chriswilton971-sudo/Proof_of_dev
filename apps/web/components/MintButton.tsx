@@ -104,15 +104,15 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
     args: tokenId !== undefined ? [tokenId] : undefined,
     query: {
       enabled: keeperhubState === "triggered" && tokenId !== undefined && tokenId > 0n,
-      refetchInterval: 4000,
+      // Stop polling once verified rather than looping forever.
+      refetchInterval: (query) => (query.state.data === true ? false : 4000),
     },
   });
 
-  useEffect(() => {
-    if (isVerifiedOnChain === true && keeperhubState === "triggered") {
-      setKeeperhubState("verified");
-    }
-  }, [isVerifiedOnChain, keeperhubState]);
+  // Derived, not stored: "verified" is just "triggered" + on-chain
+  // confirmation, computed each render rather than synced via an effect.
+  const displayKeeperhubState =
+    isVerifiedOnChain === true && keeperhubState === "triggered" ? "verified" : keeperhubState;
 
   async function handleConfirmMint() {
     setMintError(null);
@@ -194,7 +194,7 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
           </a>
         )}
 
-        <KeeperHubBadge state={keeperhubState} txHash={keeperhubTxHash} />
+        <KeeperHubBadge state={displayKeeperhubState} txHash={keeperhubTxHash} />
 
         <p className="text-xs text-slate-600 mt-4">
           This NFT reflects on-chain activity only and does not certify developer skill.

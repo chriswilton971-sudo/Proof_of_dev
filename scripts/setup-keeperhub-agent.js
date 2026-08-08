@@ -7,7 +7,7 @@
  * It validates credentials and provides step-by-step setup instructions.
  *
  * Usage:
- *   node scripts/setup-keeperhub-agent.js
+ *   npm run setup:keeperhub-agent
  */
 
 import * as fs from "fs";
@@ -106,7 +106,7 @@ async function main() {
 
   // Step 4: Create/Update .env.local
   console.log(
-    "\n╭─ Step 4: Configure Environment ────────────────────────╮"
+    "\n╭─ Step 4: Configure Environment ─────────���──────────────╮"
   );
   console.log("│ Creating/updating .env.local...                         │");
   console.log("╰─────────────────────────────────────────────────────────╯\n");

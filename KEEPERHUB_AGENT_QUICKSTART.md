@@ -128,7 +128,7 @@ KeeperHub API
 ✓ Returns tx hash + gas used
 ```
 
-## 🎓 Example: Post-Mint Automation
+## 🏆 Example: Post-Mint Automation
 
 ```
 User: "Deploy a workflow for marking NFT mints as verified"

@@ -2,7 +2,7 @@
 
 A full-stack web app that analyzes an Ethereum wallet's on-chain developer activity and generates a transparent, explainable reputation score. Optionally mint it as a soulbound (non-transferable) NFT on Sepolia or publish an EAS attestation.
 
-> **Built for the KeeperHub Agents Onchain Hackathon.** The mint itself is a standard EIP-712-authorized transaction signed by the recipient's own wallet — the trust model requires that (see [Trust model](#on-chain-features) below). The on-chain step our agent actually executes is what happens next: once a mint is confirmed, our worker independently re-verifies the `Minted` event on Etherscan, then asks **KeeperHub** to execute `markVerified(tokenId)` — a real, gas-spending transaction routed and paid through KeeperHub via x402/MPP, with a full trigger → simulation → outcome audit trail. See [KeeperHub post-mint automation](#keeperhub-post-mint-automation) for the code path, `npm run demo:keeperhub` to trigger it directly without walking the mint UI, and the dashboard's **"Verified via KeeperHub"** badge, which polls `isVerified(tokenId)` on-chain and links straight to the KeeperHub-submitted transaction once it lands.
+> **Built for the KeeperHub Agents Onchain Hackathon.** The mint itself is a standard EIP-712-authorized transaction signed by the recipient's own wallet — the trust model requires that (see [Trust model](#on-chain-features) below). The on-chain step our agent actually executes is what happens next: once a mint is confirmed, our worker independently re-verifies the `Minted` event on Etherscan, then asks **KeeperHub** to execute `markVerified(tokenId)` via its Direct Execution API — a real, gas-spending transaction, signed by KeeperHub's own non-custodial Turnkey-secured wallet, with a full trigger → simulation → outcome audit trail. See [KeeperHub post-mint automation](#keeperhub-post-mint-automation) for the code path, `npm run demo:keeperhub` to trigger it directly without walking the mint UI, and the dashboard's **"Verified via KeeperHub"** badge, which polls `isVerified(tokenId)` on-chain and links straight to the KeeperHub-submitted transaction once it lands.
 
 ---
 
@@ -271,6 +271,23 @@ proof-of-dev/
 - **Rust** (indexer)
 - **Solidity 0.8.20** (soulbound NFT)
 - **EAS SDK** (attestations)
+
+---
+
+## Team
+
+Built by [The Abuja Algorithmic Defenders (TAAD)](https://x.com/taadengineers?s=11) for the [KeeperHub Agents Onchain Hackathon](https://dorahacks.io/hackathon/agents-onchain/detail):
+
+- [armstrongmonday](https://github.com/armstrongmonday)
+- [chriswilton971-sudo](https://github.com/chriswilton971-sudo)
+- [danielnweze54-cyber](https://github.com/danielnweze54-cyber)
+
+Team page: [DoraHacks](https://dorahacks.io/navi?to=%2Fhome)
+
+Companion bounty submissions for KeeperHub's Best Onboarding UX Improvement:
+- [Onboarding teardown](docs/keeperhub-onboarding-teardown.md) — where we got stuck integrating KeeperHub, and how we fixed it
+- [keeperhub-agent-quickstart](https://github.com/chriswilton971-sudo/keeperhub-agent-quickstart) — standalone starter template for the trigger → wait → confirm flow
+- [KeeperHub/keeperhub#1974](https://github.com/KeeperHub/keeperhub/pull/1974) — docs PR adding an Agent Quick Start page
 
 ---
 

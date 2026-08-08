@@ -334,7 +334,9 @@ app.post("/webhooks/keeperhub/post-mint", async (req, res) => {
       status: "triggered",
       tokenId,
       account,
-      protocolUsed: result?.protocol ?? null,
+      executionId: result?.executionId ?? null,
+      completed: result?.completed ?? false,
+      executionStatus: result?.status ?? null,
       txHash: result?.txHash ?? null,
     });
   } catch (err) {

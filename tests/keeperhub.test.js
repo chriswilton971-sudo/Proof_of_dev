@@ -35,12 +35,6 @@ describe("keeperhub config guards", () => {
     assert.equal(mod.isAgenticWalletConfigured(), true);
   });
 
-  it("KEEPERHUB_PAYMENT_PREF parses the comma-separated env var", async () => {
-    process.env.KEEPERHUB_PAYMENT_PREF = "mpp, x402 ,,";
-    const mod = await import(`../services/analysis/keeperhub.js?t=${Date.now()}`);
-    assert.deepEqual(mod.KEEPERHUB_PAYMENT_PREF, ["mpp", "x402"]);
-  });
-
   it("triggerPostMintVerification() throws when no workflow ID is set", async () => {
     delete process.env.KEEPERHUB_MARKVERIFIED_WORKFLOW_ID;
     const mod = await import(`../services/analysis/keeperhub.js?t=${Date.now()}`);

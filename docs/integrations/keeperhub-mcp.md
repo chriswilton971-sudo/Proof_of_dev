@@ -10,7 +10,8 @@ and non-custodial signing handled for you.
 
 **Status: connected and automating.** After a wallet mints its soulbound
 NFT, KeeperHub executes `markVerified(tokenId)` on `ProofOfDev.sol` as a
-real, gas-spending follow-up transaction, routed via x402 or MPP. See the
+real, gas-spending follow-up transaction, triggered via KeeperHub's
+Workflow Execution API. See the
 "KeeperHub post-mint automation" section in the root `README.md` for the
 full flow diagram, or read the code directly:
 
@@ -61,10 +62,12 @@ as `services/analysis/config.js` and `chain-data/http.js`. It exposes:
 - `checkKeeperhubConnection()` / `isKeeperhubConfigured()` -- connectivity + config guards
 - `isAgenticWalletConfigured()` -- guards the signing wallet key specifically
 - `executeWorkflow({ workflowId, input })` -- the general-purpose call into
-  KeeperHub's `/v1/workflows/:id/execute`, routed by `KEEPERHUB_PAYMENT_MODE`
-  (`dual` / `x402` / `mpp`), with `logAuditEvent()` firing at both the
-  `trigger` and `outcome` stages (protocol used, tx hash, gas used) --
-  posted to `KEEPERHUB_AUDIT_WEBHOOK` if configured
+  KeeperHub's Workflow Execution API: `POST /api/workflows/:id/execute`
+  (returns only an `executionId` + `status: "running"`), then
+  `GET /api/workflows/executions/:id/wait` to block until the run reaches
+  a terminal state and a transaction hash is available. `logAuditEvent()`
+  fires at both the `trigger` and `outcome` stages (execution id, tx hash,
+  gas used) -- posted to `KEEPERHUB_AUDIT_WEBHOOK` if configured
 - `triggerPostMintVerification({ tokenId, account, mintTxHash })` -- the
   concrete post-mint use of `executeWorkflow()` described above
 
@@ -75,7 +78,6 @@ full annotated list):
 KEEPERHUB_API_KEY=
 KEEPERHUB_BASE_URL=https://app.keeperhub.com
 KEEPERHUB_WALLET_PRIVATE_KEY=
-KEEPERHUB_PAYMENT_MODE=dual
 KEEPERHUB_MARKVERIFIED_WORKFLOW_ID=
 KEEPERHUB_WEBHOOK_SECRET=
 KEEPERHUB_AUDIT_WEBHOOK=

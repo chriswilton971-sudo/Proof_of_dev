@@ -1,8 +1,23 @@
 /**
- * KeeperHub MCP/REST client.
+ * KeeperHub REST client.
  *
- * Covers: connectivity check, agentic-wallet config guard, dual x402/MPP
- * payment routing, and audit-trail webhook logging.
+ * Covers: connectivity check, agentic-wallet config guard, workflow
+ * execution (trigger -> wait for terminal state -> extract tx hash), and
+ * audit-trail webhook logging.
+ *
+ * Endpoint paths verified against https://docs.keeperhub.com/api directly
+ * (2026-08). Two corrections from an earlier draft, in case this file is
+ * ever "fixed" back to the wrong shape from an old branch:
+ *   1. The base URL is https://app.keeperhub.com with NO /api suffix —
+ *      documented paths already include /api (e.g. /api/workflows/{id}).
+ *      Do not set KEEPERHUB_BASE_URL to .../api or you get a doubled
+ *      /api/api prefix and a 404.
+ *   2. There is no "payment mode" field on POST /api/workflows/{id}/execute.
+ *      x402/MPP payment routing applies to workflows YOU publish for other
+ *      agents to call (see docs.keeperhub.com/workflows/hub), not to how
+ *      you trigger your own workflow. Don't reintroduce a `payment` field
+ *      in the execute request body — it isn't part of the documented API
+ *      and the server has no defined behavior for it.
  *
  * IMPORTANT: KEEPERHUB_WALLET_PRIVATE_KEY is read from process.env only.
  * It is never logged, never included in error messages, and this module
@@ -20,6 +35,11 @@ export const KEEPERHUB_MCP_URL       = process.env.KEEPERHUB_MCP_URL ?? `${KEEPE
 export const KEEPERHUB_API_KEY       = process.env.KEEPERHUB_API_KEY ?? "";
 export const KEEPERHUB_AUDIT_WEBHOOK = process.env.KEEPERHUB_AUDIT_WEBHOOK ?? "";
 
+// How long to block waiting for a triggered execution to finish before
+// falling back to reporting "still running" rather than a tx hash. The API
+// caps this server-side at 60000ms per call (see docs.keeperhub.com/api/executions).
+const EXECUTION_WAIT_TIMEOUT_MS = 55000;
+
 // KeeperHub workflow ID that calls ProofOfDev.markVerified(tokenId) as the
 // post-mint follow-up step (see contracts/ProofOfDev.sol). Configure this
 // once you've created the workflow in the KeeperHub dashboard/API.
@@ -30,15 +50,6 @@ export const KEEPERHUB_MARKVERIFIED_WORKFLOW_ID =
 // back as `x-webhook-secret`. This gates a route that spends real gas via an
 // autonomous wallet — never leave it unset outside local/mock development.
 export const KEEPERHUB_WEBHOOK_SECRET = process.env.KEEPERHUB_WEBHOOK_SECRET ?? "";
-
-// "dual" | "x402" | "mpp" — dual lets KeeperHub auto-select per call.
-export const KEEPERHUB_PAYMENT_MODE = process.env.KEEPERHUB_PAYMENT_MODE ?? "x402";
-
-// Ordered preference list used only when PAYMENT_MODE is "dual".
-export const KEEPERHUB_PAYMENT_PREF = (process.env.KEEPERHUB_PAYMENT_PREF ?? "x402,mpp")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
 
 function isPlaceholderKey(val) {
   if (!val || !String(val).trim()) return true;
@@ -74,11 +85,13 @@ async function keeperhubRequest(path, options = {}) {
 }
 
 /**
- * Basic connectivity check against the MCP endpoint's status info.
- * Not a real workflow call — just confirms the key/base URL work.
+ * Basic connectivity check. Confirms the key/base URL work by listing
+ * workflows (cheap, always available with a valid API key) rather than
+ * hitting /mcp directly, which speaks the MCP protocol (JSON-RPC/SSE) and
+ * isn't a plain REST-with-Bearer status endpoint.
  */
 export async function checkKeeperhubConnection() {
-  return keeperhubRequest("/mcp", { method: "GET" });
+  return keeperhubRequest("/api/workflows", { method: "GET" });
 }
 
 /**
@@ -101,45 +114,70 @@ export async function logAuditEvent(event) {
 }
 
 /**
- * Submit an execution request and let KeeperHub route it over x402 or MPP
- * depending on KEEPERHUB_PAYMENT_MODE. Every call is audit-logged
- * regardless of outcome (trigger + result), per KeeperHub's own audit-trail
- * model (trigger, simulation, submitted tx, gas used, outcome, timestamp).
+ * Trigger a workflow execution and block until it reaches a terminal state,
+ * per KeeperHub's own audit-trail model (trigger, submitted tx, gas used,
+ * outcome, timestamp) — every call is audit-logged regardless of outcome.
+ *
+ * Two-step under the hood: POST .../execute only returns { executionId,
+ * status: "running" } — it does NOT return a tx hash synchronously. The
+ * hash only appears once the execution finishes, via GET
+ * .../executions/{id}/wait. See docs.keeperhub.com/api/workflows and
+ * docs.keeperhub.com/api/executions.
  *
  * @param {object} params
- * @param {string} params.workflowId - KeeperHub workflow/action identifier.
- * @param {object} params.input - Payload for the workflow.
+ * @param {string} params.workflowId - KeeperHub workflow identifier.
+ * @param {object} params.input - Payload for the workflow's trigger.
  */
 export async function executeWorkflow({ workflowId, input }) {
   if (!isAgenticWalletConfigured()) {
     throw new Error(
       "KEEPERHUB_WALLET_PRIVATE_KEY is not configured — refusing to submit " +
-      "an autonomous-payment workflow without a signing key."
+      "an autonomous workflow execution without a signing key."
     );
   }
 
-  const paymentMode = KEEPERHUB_PAYMENT_MODE === "dual"
-    ? { mode: "dual", preference: KEEPERHUB_PAYMENT_PREF }
-    : { mode: KEEPERHUB_PAYMENT_MODE };
-
-  await logAuditEvent({ stage: "trigger", workflowId, paymentMode });
+  await logAuditEvent({ stage: "trigger", workflowId, input });
 
   try {
-    const result = await keeperhubRequest(`/v1/workflows/${workflowId}/execute`, {
+    const triggered = await keeperhubRequest(`/api/workflows/${workflowId}/execute`, {
       method: "POST",
-      body: JSON.stringify({ input, payment: paymentMode }),
+      body: JSON.stringify({ input }),
     });
+
+    const executionId = triggered?.executionId;
+    if (!executionId) {
+      throw new Error(`Execute returned no executionId: ${JSON.stringify(triggered)}`);
+    }
+
+    const receipt = await keeperhubRequest(
+      `/api/workflows/executions/${executionId}/wait?timeoutMs=${EXECUTION_WAIT_TIMEOUT_MS}`,
+      { method: "GET" },
+    );
+
+    if (receipt.status === "error") {
+      throw new Error(receipt.error || `Execution ${executionId} failed`);
+    }
+
+    // transactionHashes is ordered; a single-tx workflow (our markVerified
+    // case) has exactly one entry once the run completes.
+    const txHash = receipt.transactionHashes?.[0]?.hash ?? null;
 
     await logAuditEvent({
       stage: "outcome",
       workflowId,
-      status: "success",
-      txHash: result?.txHash ?? null,
-      gasUsed: result?.gasUsed ?? null,
-      protocolUsed: result?.protocol ?? null, // "x402" | "mpp"
+      executionId,
+      status: receipt.completed ? receipt.status : "timed_out_still_running",
+      txHash,
+      gasUsedWei: receipt.gasUsedWei ?? null,
     });
 
-    return result;
+    return {
+      executionId,
+      status: receipt.status,
+      completed: receipt.completed,
+      txHash,
+      gasUsedWei: receipt.gasUsedWei ?? null,
+    };
   } catch (err) {
     await logAuditEvent({
       stage: "outcome",

@@ -15,9 +15,9 @@
  * Environment (set via .env.local or GitHub Copilot secrets):
  *   KEEPERHUB_API_KEY - API key from https://app.keeperhub.com/settings/api-keys
  *   KEEPERHUB_BASE_URL - Defaults to https://app.keeperhub.com
- *   KEEPERHUB_WALLET_PRIVATE_KEY - Agentic wallet for autonomous signing (hex string, no 0x prefix)
+ *   KEEPERHUB_WALLET_PRIVATE_KEY - Agentic wallet for autonomous signing
  *
- * See docs/integrations/keeperhub-mcp.md for setup and context.
+ * See docs/integrations/keeperhub-copilot-agent.md for setup and context.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -25,7 +25,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  ToolSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
 // Import the existing KeeperHub client from the app
@@ -33,7 +32,6 @@ import {
   isKeeperhubConfigured,
   isAgenticWalletConfigured,
   checkKeeperhubConnection,
-  KEEPERHUB_API_KEY,
   KEEPERHUB_BASE_URL,
 } from "../analysis/keeperhub.js";
 
@@ -52,24 +50,20 @@ async function keeperhubRequest(path, options = {}) {
   if (!isKeeperhubConfigured()) {
     throw new Error(
       "KEEPERHUB_API_KEY is not configured. " +
-      "Authenticate first: set KEEPERHUB_API_KEY in your environment or via GitHub Copilot secrets."
+      "Set KEEPERHUB_API_KEY in your environment or GitHub Copilot secrets."
     );
   }
 
   return fetchJson(`${KEEPERHUB_BASE_URL}${path}`, {
     ...options,
     headers: {
-      Authorization: `Bearer ${KEEPERHUB_API_KEY}`,
+      Authorization: `Bearer ${process.env.KEEPERHUB_API_KEY}`,
       "Content-Type": "application/json",
       ...(options.headers ?? {}),
     },
   });
 }
 
-/**
- * Tool: authenticate
- * Validates the KeeperHub API key and returns account info.
- */
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -77,16 +71,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         name: "authenticate",
         description:
           "Authenticate with KeeperHub using your API key. " +
-          "Call this once to link your KeeperHub account. " +
-          "Returns account information and organization details.",
+          "Call this once to link your KeeperHub account.",
         inputSchema: {
           type: "object",
           properties: {
             api_key: {
               type: "string",
-              description:
-                "KeeperHub API key (starts with 'kh_'). " +
-                "Get this from https://app.keeperhub.com/settings/api-keys",
+              description: "KeeperHub API key (starts with 'kh_')",
             },
           },
           required: ["api_key"],
@@ -94,15 +85,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list_workflows",
-        description:
-          "List all available workflows in your KeeperHub account. " +
-          "Shows workflow IDs, names, and descriptions for use with execute_workflow.",
+        description: "List all available workflows in your KeeperHub account.",
         inputSchema: {
           type: "object",
           properties: {
             limit: {
               type: "integer",
-              description: "Maximum number of workflows to return (default: 50)",
+              description: "Maximum number of workflows (default: 50)",
               default: 50,
             },
           },
@@ -110,40 +99,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "create_workflow",
-        description:
-          "Create a new automation workflow in KeeperHub. " +
-          "Workflows define on-chain actions (e.g., calling a contract function) " +
-          "that KeeperHub will execute autonomously.",
+        description: "Create a new automation workflow in KeeperHub.",
         inputSchema: {
           type: "object",
           properties: {
             name: {
               type: "string",
-              description: "Workflow name (e.g., 'markVerified automation')",
+              description: "Workflow name",
             },
             description: {
               type: "string",
-              description: "What this workflow does",
+              description: "Workflow description",
             },
             network: {
               type: "string",
               enum: ["mainnet", "sepolia", "arbitrum", "polygon"],
-              description: "Blockchain network for execution",
+              description: "Blockchain network",
             },
             contract_address: {
               type: "string",
-              description:
-                "Address of the smart contract to call (with 0x prefix)",
+              description: "Smart contract address (with 0x prefix)",
             },
             function_signature: {
               type: "string",
-              description:
-                "Function to call (e.g., 'markVerified(uint256)' or 'mint(address,uint256)')",
+              description: "Function to call (e.g., 'markVerified(uint256)')",
             },
             input_schema: {
               type: "object",
-              description:
-                "JSON schema defining workflow inputs (e.g., { tokenId: 'uint256', account: 'address' })",
+              description: "JSON schema for workflow inputs",
             },
           },
           required: [
@@ -158,21 +141,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: "execute_workflow",
         description:
-          "Execute a workflow immediately. " +
-          "KeeperHub handles gas estimation, simulation, retries, and MEV protection. " +
-          "Returns execution ID and transaction hash once complete.",
+          "Execute a workflow immediately with KeeperHub handling " +
+          "(gas optimization, retries, MEV protection).",
         inputSchema: {
           type: "object",
           properties: {
             workflow_id: {
               type: "string",
-              description: "ID of the workflow to execute",
+              description: "Workflow ID to execute",
             },
             input: {
               type: "object",
-              description:
-                "Workflow input parameters (must match the workflow's input schema). " +
-                "Example: { tokenId: '42', account: '0x...' }",
+              description: "Workflow input parameters",
             },
           },
           required: ["workflow_id", "input"],
@@ -180,15 +160,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "get_execution_status",
-        description:
-          "Get the current status of a workflow execution. " +
-          "Returns execution progress, transaction hash (if complete), and gas used.",
+        description: "Get execution status and results.",
         inputSchema: {
           type: "object",
           properties: {
             execution_id: {
               type: "string",
-              description: "Execution ID returned from execute_workflow",
+              description: "Execution ID from execute_workflow",
             },
           },
           required: ["execution_id"],
@@ -196,26 +174,23 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "list_executions",
-        description:
-          "List recent workflow executions with status and results. " +
-          "Useful for audit trails and monitoring.",
+        description: "List workflow execution history with optional filtering.",
         inputSchema: {
           type: "object",
           properties: {
             workflow_id: {
               type: "string",
-              description:
-                "Filter by workflow ID (optional; shows all executions if omitted)",
-            },
-            limit: {
-              type: "integer",
-              description: "Maximum number of executions to return (default: 20)",
-              default: 20,
+              description: "Filter by workflow ID (optional)",
             },
             status: {
               type: "string",
               enum: ["running", "success", "failed", "timed_out"],
-              description: "Filter by execution status (optional)",
+              description: "Filter by status (optional)",
+            },
+            limit: {
+              type: "integer",
+              description: "Max results (default: 20)",
+              default: 20,
             },
           },
         },
@@ -224,29 +199,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
   };
 });
 
-/**
- * Tool handlers
- */
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request;
 
   try {
     switch (name) {
       case "authenticate": {
-        // Validate API key format
         if (!args.api_key || !args.api_key.startsWith("kh_")) {
-          throw new Error(
-            "Invalid API key format. KeeperHub API keys start with 'kh_'. " +
-            "Get one from https://app.keeperhub.com/settings/api-keys"
-          );
+          throw new Error("Invalid API key format (must start with 'kh_')");
         }
-
-        // Set the key in env for subsequent requests
         process.env.KEEPERHUB_API_KEY = args.api_key;
-
-        // Test the connection
         const connection = await checkKeeperhubConnection();
-
         return {
           content: [
             {
@@ -255,68 +218,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 `✓ Authentication successful!\n\n` +
                 `Organization: ${connection.organization?.name || "Unknown"}\n` +
                 `Available workflows: ${connection.data?.length || 0}\n\n` +
-                `You can now deploy and execute workflows. Try:\n` +
-                `  1. "list_workflows" to see available workflows\n` +
-                `  2. "execute_workflow" to run an automation\n` +
-                `  3. "create_workflow" to build a new one`,
+                `You can now deploy and execute workflows.`,
             },
           ],
         };
       }
 
       case "list_workflows": {
-        const limit = args.limit || 50;
         const response = await keeperhubRequest(
-          `/api/workflows?limit=${limit}`,
+          `/api/workflows?limit=${args.limit || 50}`,
           { method: "GET" }
         );
-
         const workflows = response.data || [];
         const text =
           workflows.length === 0
-            ? "No workflows found. Create one with create_workflow."
+            ? "No workflows found."
             : workflows
                 .map(
                   (w) =>
                     `• ${w.name} (ID: ${w.id})\n` +
                     `  Network: ${w.network || "unknown"}\n` +
-                    `  Contract: ${w.contractAddress || "N/A"}\n` +
-                    `  ${w.description || "No description"}`
+                    `  Contract: ${w.contractAddress || "N/A"}`
                 )
                 .join("\n\n");
-
         return {
-          content: [
-            {
-              type: "text",
-              text: `Available Workflows:\n\n${text}`,
-            },
-          ],
+          content: [{ type: "text", text: `Available Workflows:\n\n${text}` }],
         };
       }
 
       case "create_workflow": {
         if (!isAgenticWalletConfigured()) {
-          throw new Error(
-            "KEEPERHUB_WALLET_PRIVATE_KEY is not configured. " +
-            "Set it before creating workflows that will execute autonomously."
-          );
+          throw new Error("KEEPERHUB_WALLET_PRIVATE_KEY not configured");
         }
-
-        const payload = {
-          name: args.name,
-          description: args.description || "",
-          network: args.network,
-          contractAddress: args.contract_address,
-          functionSignature: args.function_signature,
-          inputSchema: args.input_schema || {},
-        };
-
         const created = await keeperhubRequest("/api/workflows", {
           method: "POST",
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            name: args.name,
+            description: args.description || "",
+            network: args.network,
+            contractAddress: args.contract_address,
+            functionSignature: args.function_signature,
+            inputSchema: args.input_schema || {},
+          }),
         });
-
         return {
           content: [
             {
@@ -326,9 +270,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 `ID: ${created.id}\n` +
                 `Name: ${created.name}\n` +
                 `Network: ${created.network}\n` +
-                `Contract: ${created.contractAddress}\n` +
-                `Function: ${created.functionSignature}\n\n` +
-                `Use this ID to execute_workflow or monitor_workflow.`,
+                `Contract: ${created.contractAddress}`,
             },
           ],
         };
@@ -336,14 +278,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "execute_workflow": {
         if (!isAgenticWalletConfigured()) {
-          throw new Error(
-            "KEEPERHUB_WALLET_PRIVATE_KEY is not configured. " +
-            "Autonomous workflow execution requires a signing wallet. " +
-            "Set it via your environment or GitHub Copilot secrets."
-          );
+          throw new Error("KEEPERHUB_WALLET_PRIVATE_KEY not configured");
         }
-
-        // Trigger the execution
         const triggered = await keeperhubRequest(
           `/api/workflows/${args.workflow_id}/execute`,
           {
@@ -351,33 +287,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             body: JSON.stringify({ input: args.input }),
           }
         );
-
         const executionId = triggered.executionId;
-        if (!executionId) {
-          throw new Error(
-            `Workflow trigger failed: ${JSON.stringify(triggered)}`
-          );
-        }
+        if (!executionId) throw new Error("Execute returned no executionId");
 
-        // Wait for completion (up to 55 seconds, per API limits)
         let receipt;
         try {
           receipt = await keeperhubRequest(
             `/api/workflows/executions/${executionId}/wait?timeoutMs=55000`,
             { method: "GET" }
           );
-        } catch (err) {
-          // If wait times out, the execution is still running but we don't have a tx hash yet
+        } catch {
           receipt = { status: "running", completed: false };
         }
 
         const txHash = receipt.transactionHashes?.[0]?.hash || null;
-        const gasUsed = receipt.gasUsedWei || null;
-
         const statusText =
           receipt.completed && txHash
-            ? `✓ Workflow executed successfully!\n\nTx Hash: ${txHash}`
-            : `⏳ Workflow is running (Execution ID: ${executionId})\nCheck status with get_execution_status`;
+            ? `✓ Workflow executed!\nTx Hash: ${txHash}`
+            : `⏳ Workflow running (Execution ID: ${executionId})`;
 
         return {
           content: [
@@ -385,9 +312,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text:
                 `${statusText}\n` +
-                `Status: ${receipt.status}\n` +
-                `${gasUsed ? `Gas Used: ${gasUsed} wei\n` : ""}` +
-                `Execution ID: ${executionId}`,
+                `Status: ${receipt.status}` +
+                `${receipt.gasUsedWei ? `\nGas Used: ${receipt.gasUsedWei} wei` : ""}`,
             },
           ],
         };
@@ -398,7 +324,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           `/api/workflows/executions/${args.execution_id}`,
           { method: "GET" }
         );
-
         const txHash = execution.transactionHashes?.[0]?.hash || "Pending";
         const statusEmoji =
           execution.status === "success"
@@ -406,34 +331,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             : execution.status === "error"
               ? "✗"
               : "⏳";
-
         return {
           content: [
             {
               type: "text",
               text:
-                `${statusEmoji} Execution Status\n\n` +
+                `${statusEmoji} Status: ${execution.status}\n` +
                 `Execution ID: ${args.execution_id}\n` +
-                `Status: ${execution.status}\n` +
                 `Tx Hash: ${txHash}\n` +
-                `${execution.gasUsedWei ? `Gas Used: ${execution.gasUsedWei} wei\n` : ""}` +
-                `Completed: ${execution.completed ? "Yes" : "No"}\n` +
-                `${execution.error ? `Error: ${execution.error}` : ""}`,
+                `Completed: ${execution.completed ? "Yes" : "No"}` +
+                `${execution.error ? `\nError: ${execution.error}` : ""}`,
             },
           ],
         };
       }
 
       case "list_executions": {
-        let path = "/api/workflows/executions";
         const params = [];
         if (args.workflow_id) params.push(`workflowId=${args.workflow_id}`);
         if (args.status) params.push(`status=${args.status}`);
         params.push(`limit=${args.limit || 20}`);
-        if (params.length > 0) path += `?${params.join("&")}`;
-
+        const path =
+          `/api/workflows/executions` +
+          (params.length > 0 ? "?" + params.join("&") : "");
         const response = await keeperhubRequest(path, { method: "GET" });
-
         const executions = response.data || [];
         const text =
           executions.length === 0
@@ -444,17 +365,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     `• Execution ${e.id}\n` +
                     `  Status: ${e.status}\n` +
                     `  Workflow: ${e.workflowId}\n` +
-                    `  Tx: ${e.transactionHashes?.[0]?.hash || "Pending"}\n` +
-                    `  Time: ${e.createdAt}`
+                    `  Tx: ${e.transactionHashes?.[0]?.hash || "Pending"}`
                 )
                 .join("\n\n");
-
         return {
           content: [
-            {
-              type: "text",
-              text: `Recent Executions:\n\n${text}`,
-            },
+            { type: "text", text: `Recent Executions:\n\n${text}` },
           ],
         };
       }
@@ -475,14 +391,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-/**
- * Start the MCP server over stdio.
- * This connects to GitHub Copilot or other MCP clients.
- */
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("[keeperhub-mcp] Server started and connected.");
+  console.error("[keeperhub-mcp] Server connected.");
 }
 
 main().catch(console.error);

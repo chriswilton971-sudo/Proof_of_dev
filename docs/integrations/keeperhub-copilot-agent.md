@@ -1,303 +1,145 @@
 # KeeperHub × GitHub Copilot Agent Integration
 
-This guide walks through adding the KeeperHub MCP server to your GitHub Copilot agent, enabling autonomous on-chain workflow deployment and execution.
+This guide enables your GitHub Copilot agent to autonomously deploy and execute on-chain workflows via KeeperHub.
 
-## What You'll Get
+## What Your Agent Can Do
 
-After setup, your Copilot agent can:
-
-1. **Authenticate** — Link your KeeperHub account with a single API key
-2. **Deploy Workflows** — Create new automation workflows that call smart contracts
-3. **Execute Workflows** — Run them autonomously with:
-   - ✅ Full gas simulation and optimization
+After setup:
+1. **Authenticate** — Link your KeeperHub account with one API key
+2. **Deploy Workflows** — Create automation workflows that call smart contracts
+3. **Execute Workflows** — Run them with full KeeperHub handling:
+   - ✅ Gas simulation and optimization
    - ✅ Automatic retries on stalls
-   - ✅ MEV-protected transaction submission
-   - ✅ Complete audit trail (execution ID, tx hash, gas used)
+   - ✅ MEV-protected submission
+   - ✅ Complete audit trail
 
-## Setup
+## Quick Start
 
-### 1. Get a KeeperHub API Key
+### 1. Get KeeperHub API Key
 
 1. Go to [app.keeperhub.com](https://app.keeperhub.com)
-2. Sign in or create an account
-3. Navigate to **Settings → API Keys → Organisation**
-4. Create a new API key (prefix: `kh_`)
-5. Copy it safely — treat it like a production credential
+2. Settings → API Keys → Organisation
+3. Create a new API key (prefix: `kh_`)
 
-### 2. Configure Your Environment
+### 2. Configure Environment
 
-Add the key to your `.env.local` (or GitHub Copilot secrets):
+Add to `.env.local`:
 
 ```bash
 # Required
 KEEPERHUB_API_KEY=kh_your_key_here
 
-# Optional (defaults shown)
-KEEPERHUB_BASE_URL=https://app.keeperhub.com
-
-# For autonomous execution (required to run workflows)
-KEEPERHUB_WALLET_PRIVATE_KEY=0x...  # Hex string, no 0x prefix needed in the value
+# For autonomous execution (your agentic wallet)
+KEEPERHUB_WALLET_PRIVATE_KEY=0x...
 ```
 
-**Where to set these:**
-- **Local dev**: Create/edit `.env.local` at the repo root
-- **GitHub Copilot**: Use GitHub Secrets or Copilot's built-in secret manager
-- **CI/CD**: Add to your GitHub Actions secrets, then reference them
-
-### 3. Enable the MCP Server
-
-The MCP configuration is already in `.mcp.json`. Copilot will auto-discover it.
-
-Alternatively, manually add it:
-
-```bash
-# Claude Code or similar
-mcp add keeperhub --transport stdio --command "node services/mcp/keeperhub-server.js"
-```
-
-### 4. Test the Connection
+### 3. Use Your Agent
 
 Ask your Copilot agent:
 
 ```
-Authenticate me with KeeperHub using my API key kh_...
+"Authenticate me with KeeperHub using API key kh_..."
 ```
 
-It should respond with your organization name and workflow count.
+Agent responds with your organization and workflow count.
 
----
+## Agent Commands
 
-## Usage Examples
-
-### Example 1: Deploy a Simple Workflow
+### Deploy a Workflow
 
 ```
-Create a KeeperHub workflow that:
-- Calls markVerified(tokenId) on contract 0x1234...
-- Network: Sepolia
-- Takes { tokenId, account, mintTxHash } as input
-- Name: "Post-Mint Verification"
+"Create a KeeperHub workflow that calls markVerified(tokenId) on 
+contract 0x1234... on Sepolia, taking tokenId, account, mintTxHash as input"
 ```
 
-The agent will:
-1. Call `create_workflow` with your parameters
-2. Return a workflow ID
-3. You can then execute it with `execute_workflow`
+Agent returns workflow ID for later execution.
 
-### Example 2: Execute and Monitor
+### Execute a Workflow
 
 ```
-Execute workflow wf_abc123 with tokenId=42 and account=0x1234...
-Then check the status every 10 seconds.
+"Execute workflow wf_abc123 with tokenId=42 and account=0x..."
 ```
 
-The agent will:
-1. Trigger the workflow execution
-2. Wait for the transaction to confirm
-3. Return the transaction hash and gas used
-4. Optionally monitor the status via `get_execution_status`
+Agent triggers execution and returns transaction hash + gas used.
 
-### Example 3: Audit Trail
+### Monitor Execution
 
 ```
-List all executions from the past hour, filtered by status=success.
+"Get status of execution ex_123"
 ```
 
-The agent retrieves the complete execution log:
-- Execution IDs
-- Workflow IDs
-- Transaction hashes
-- Gas consumed
-- Timestamps
+Agent returns status, transaction hash (if complete), and gas consumed.
 
----
+### View History
 
-## MCP Tools Reference
+```
+"List all successful executions"
+```
 
-### `authenticate`
+Agent returns audit trail of past workflow runs.
 
-Validate and link your KeeperHub account.
+## MCP Tools
 
-**Input:**
-- `api_key` (string, required) - Your `kh_*` API key
-
-**Returns:** Organization name, workflow count, and confirmation
-
----
-
-### `list_workflows`
-
-View all available workflows in your account.
-
-**Input:**
-- `limit` (integer, optional) - Max workflows to return (default: 50)
-
-**Returns:** List of workflow IDs, names, descriptions, networks, and contract addresses
-
----
-
-### `create_workflow`
-
-Deploy a new automation workflow.
-
-**Input:**
-- `name` (string, required) - Workflow name
-- `description` (string, optional) - What it does
-- `network` (string, required) - `mainnet` | `sepolia` | `arbitrum` | `polygon`
-- `contract_address` (string, required) - Smart contract address (with `0x`)
-- `function_signature` (string, required) - e.g., `markVerified(uint256)` or `mint(address,uint256)`
-- `input_schema` (object, required) - JSON schema for workflow inputs
-
-**Returns:** Workflow ID, name, network, contract, function signature
-
----
-
-### `execute_workflow`
-
-Run a workflow immediately.
-
-**Input:**
-- `workflow_id` (string, required) - ID from `create_workflow` or `list_workflows`
-- `input` (object, required) - Workflow inputs matching the input schema
-
-**Returns:**
-- `executionId` - Unique execution ID
-- `status` - Current status (running, success, error)
-- `completed` - Boolean
-- `txHash` - Transaction hash (once complete)
-- `gasUsedWei` - Gas consumed (once complete)
-
-**KeeperHub Handling:**
-- Every transaction is simulated before submission
-- Gas is optimized
-- If the transaction stalls, it's automatically retried
-- MEV protection is applied to prevent sandwich attacks
-- Full audit trail logged
-
----
-
-### `get_execution_status`
-
-Check the status of an ongoing or completed execution.
-
-**Input:**
-- `execution_id` (string, required) - From `execute_workflow` response
-
-**Returns:**
-- Current status
-- Transaction hash (if complete)
-- Gas used
-- Completion flag
-- Any error messages
-
----
-
-### `list_executions`
-
-View execution history with filtering.
-
-**Input:**
-- `workflow_id` (string, optional) - Filter by workflow
-- `status` (string, optional) - `running` | `success` | `failed` | `timed_out`
-- `limit` (integer, optional) - Max results (default: 20)
-
-**Returns:** Execution list with IDs, statuses, workflows, tx hashes, and timestamps
-
----
-
-## Troubleshooting
-
-### "KEEPERHUB_API_KEY is not configured"
-
-**Solution:** Set `KEEPERHUB_API_KEY` in your `.env.local` or GitHub Copilot secrets.
-
-### "KEEPERHUB_WALLET_PRIVATE_KEY is not configured"
-
-**Solution:** Set the private key of your agentic wallet in your environment. This wallet must have:
-- ETH for gas on the target network
-- Permission to sign transactions (if the contract requires it)
-
-### "Workflow trigger failed"
-
-Check:
-1. The workflow ID is correct (`list_workflows` to verify)
-2. The input object matches the workflow's input schema
-3. The contract address and function signature are valid
-
-### Execution times out after 55 seconds
-
-KeeperHub's API has a 60-second server-side timeout. If your transaction is complex:
-1. Use `get_execution_status` with the execution ID to check if it's still running
-2. Wait longer — KeeperHub continues retrying in the background
-3. Check the audit trail for the eventual transaction hash
-
----
+| Tool | Purpose |
+|------|----------|
+| `authenticate` | Link KeeperHub account with API key |
+| `list_workflows` | View available workflows |
+| `create_workflow` | Deploy new automation workflows |
+| `execute_workflow` | Run workflow (gas optimized, retried, MEV protected) |
+| `get_execution_status` | Check execution progress and results |
+| `list_executions` | Audit trail of past workflow runs |
 
 ## Architecture
 
 ```
-Copilot Agent
-    ↓
-MCP Client (stdio)
-    ↓
-services/mcp/keeperhub-server.js
-    ↓
-services/analysis/keeperhub.js (REST client)
-    ↓
-KeeperHub API (https://app.keeperhub.com)
-    ↓
-Your Smart Contract (on Ethereum, Arbitrum, Polygon, etc.)
+Your Copilot Agent
+        ↓
+MCP Server (services/mcp/keeperhub-server.js)
+        ↓
+KeeperHub REST API
+        ↓
+Smart Contract (on-chain)
 ```
 
-The MCP server reuses the same KeeperHub client (`services/analysis/keeperhub.js`) that powers the Proof of Dev app's post-mint automation.
+## Security
 
----
+- ✅ API key and wallet private key read from environment only
+- ✅ Never logged or echoed in responses
+- ✅ Use GitHub Secrets in CI/CD
+- ✅ Full audit trail optional via `KEEPERHUB_AUDIT_WEBHOOK`
 
-## Security Notes
+## Troubleshooting
 
-1. **Never commit credentials** — `KEEPERHUB_API_KEY` and `KEEPERHUB_WALLET_PRIVATE_KEY` are always read from environment only
-2. **Use GitHub Secrets** — In CI/CD, store credentials in GitHub Actions secrets, not in `.env` files
-3. **Audit logging** — Set `KEEPERHUB_AUDIT_WEBHOOK` to get a full log of every trigger and outcome
-4. **Non-custodial signing** — The agentic wallet signs locally; keys never leave your environment
+**"KEEPERHUB_API_KEY not configured"**
+→ Set `KEEPERHUB_API_KEY` in `.env.local` or GitHub Copilot secrets
 
----
+**"KEEPERHUB_WALLET_PRIVATE_KEY not configured"**
+→ Set your agentic wallet's private key (must have ETH for gas)
 
-## Examples
+**"Workflow trigger failed"**
+→ Verify workflow ID with `list_workflows` and check input schema
 
-### Post-Mint Automation (Proof of Dev use case)
+**Execution times out after 55 seconds**
+→ KeeperHub keeps retrying in background. Use `get_execution_status` to check.
 
-```typescript
-// Agent asks:
-"Deploy a workflow that automatically calls markVerified on the ProofOfDev contract
-after someone mints an NFT. Take tokenId, account, and mintTxHash as inputs.
-Then execute it when tokenId=42, account=0x1234..., mintTxHash=0xabcd..."
+## Example: Post-Mint Automation
 
-// Agent does:
-// 1. create_workflow(...)
-// 2. execute_workflow(workflowId, { tokenId: "42", ... })
-// 3. Returns execution ID and eventually the transaction hash
 ```
+Agent: "Deploy a workflow that marks NFT mints as verified"
+→ Agent creates workflow via create_workflow
 
-### Multi-Call Workflow
+Agent: "Execute it for tokenId 42"
+→ Agent calls execute_workflow
+→ KeeperHub simulates, optimizes gas, submits tx
+→ Agent returns tx hash
 
-```typescript
-// Agent asks:
-"Create a workflow on Arbitrum that:
-1. Approves USDC for a router
-2. Swaps 100 USDC to DAI
-3. Deposits DAI into a lending pool
-Then execute it with my wallet."
-
-// Agent:
-// 1. create_workflow with multi-step inputs
-// 2. execute_workflow(...)
-// 3. KeeperHub handles gas, retries, and MEV across all steps
+Agent: "Check the status"
+→ Agent polls get_execution_status
+→ Shows: ✓ Success, Gas: 45,000 wei, Tx: 0xabcd...
 ```
-
----
 
 ## See Also
 
 - [KeeperHub Docs](https://docs.keeperhub.com)
-- [Proof of Dev README](../../README.md) — Post-mint automation flow
-- [KeeperHub Client (`keeperhub.js`)](../analysis/keeperhub.js) — Implementation details
+- [Proof of Dev README](../../README.md)
+- [KeeperHub Client Code](../analysis/keeperhub.js)

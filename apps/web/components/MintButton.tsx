@@ -59,13 +59,13 @@ export function MintButton({ profile, address, analysis }: MintButtonProps) {
   // Fire the KeeperHub post-mint follow-up once the mint is confirmed.
   // The mint itself already succeeded on-chain by this point, so this
   // trigger is tracked separately in its own badge rather than gating the
-  // "Minted!" success state — see /api/mint-verify.
+  // "Minted!" success state — see /api/keeperhub/verify.
   const keeperhubTriggered = useRef(false);
   useEffect(() => {
     if (!isMinted || !txHash || keeperhubTriggered.current) return;
     keeperhubTriggered.current = true;
     setKeeperhubState("triggering");
-    fetch("/api/mint-verify", {
+    fetch("/api/keeperhub/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ txHash }),

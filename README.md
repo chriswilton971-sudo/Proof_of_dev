@@ -194,28 +194,27 @@ Delegated server signing from `/api/attest`; the user's wallet submits on Sepoli
 
 ### KeeperHub post-mint automation
 
-[KeeperHub](https://keeperhub.com) is the on-chain execution layer for the post-mint follow-up: after a wallet mints its soulbound NFT, KeeperHub autonomously executes `markVerified(tokenId)` on `ProofOfDev.sol` — a real, gas-spending transaction, submitted and routed by KeeperHub rather than by our own signer.
+[KeeperHub](https://keeperhub.com) is the on-chain execution layer for the post-mint follow-up: after a wallet mints its soulbound NFT, KeeperHub autonomously executes `markVerified(tokenId)` on `ProofOfDev.sol` — a real, gas-spending transaction, signed and submitted by KeeperHub's own non-custodial wallet (secured by Turnkey), not by any key this app holds.
 
 **Flow:**
 
 1. `MintButton.tsx` calls `mint()` and waits for the transaction receipt (existing flow above).
-2. Once `isMinted` is true, the frontend calls `POST /api/mint-verify { txHash, contractAddress }` — a thin Next.js route that forwards to the worker API server-side, so the webhook secret never reaches the browser.
-3. `services/analysis/api.js` → `POST /webhooks/keeperhub/post-mint` independently re-verifies the `Minted` event against Etherscan (`chain-data/mintEvents.js`) — it never trusts a client-supplied `tokenId`/`account` before triggering a paid autonomous workflow.
-4. Once verified, `keeperhub.js`'s `triggerPostMintVerification()` calls `executeWorkflow()`, which submits the execution request to KeeperHub, routed via **x402 or MPP** per `KEEPERHUB_PAYMENT_MODE` (dual/x402/mpp — see `.env.example`).
-5. Every trigger and outcome (protocol used, tx hash, gas used) is posted to `KEEPERHUB_AUDIT_WEBHOOK` if configured (`logAuditEvent()`), giving a full audit trail per KeeperHub's own trigger → simulation → tx → outcome model.
+2. Once `isMinted` is true, the frontend calls `POST /api/keeperhub/verify { txHash }` — a thin Next.js route that forwards to the worker API server-side, so the webhook secret never reaches the browser.
+3. `services/analysis/api.js` → `POST /keeperhub/verify` independently re-verifies the `Minted` event against Etherscan (`chain-data/mintEvents.js`) — it never trusts a client-supplied `tokenId`/`account` before triggering a paid autonomous execution.
+4. Once verified, `keeperhub.js`'s `verifyMintOnChain()` drives KeeperHub's **Direct Execution** flow — `simulate: true` first (surfaces revert reasons before spending gas), then a real execute call carrying an `Idempotency-Key` (so a retried request can't double-submit), then polls the execution status until it reaches a terminal state.
+5. Every stage (trigger, simulation result, submitted tx, gas used, outcome, timestamp) is posted to `KEEPERHUB_AUDIT_WEBHOOK` if configured — belt-and-suspenders alongside KeeperHub's own per-execution history in its dashboard.
 6. `MintButton.tsx` reflects this live in the UI: it polls `isVerified(tokenId)` on-chain (not just the trigger response) and shows a **"Verified via KeeperHub"** badge with a link to the KeeperHub-submitted transaction once `markVerified()` actually lands — so the KeeperHub step is visible on the dashboard, not just in the code.
 
 **Setup:**
 
-1. Create an API key at `app.keeperhub.com` → Settings → API Keys, set `KEEPERHUB_API_KEY`.
-2. Provision or import an agentic wallet for KeeperHub to sign with, set `KEEPERHUB_WALLET_PRIVATE_KEY` via your host's secret manager (never commit it — see `.env.example`). This wallet must be able to call `markVerified()`, i.e. it must be (or be delegated by) the contract `owner`.
-3. In the KeeperHub dashboard, create a workflow that calls `ProofOfDev.markVerified(tokenId)` on Sepolia, taking `{ tokenId, account, mintTxHash }` as input. Set its ID as `KEEPERHUB_MARKVERIFIED_WORKFLOW_ID`.
-4. Set `KEEPERHUB_WEBHOOK_SECRET` to a random value — required by the frontend/worker handshake so nobody else can trigger paid executions on your workflow.
-5. (Optional) Set `KEEPERHUB_AUDIT_WEBHOOK` to receive trigger/outcome events.
+1. Create an API key at `app.keeperhub.com` → Settings → API Keys → Organisation tab, set `KEEPERHUB_API_KEY`.
+2. **Transfer ownership of the deployed `ProofOfDev` contract to the wallet address KeeperHub provisions for your org** (or delegate `markVerified()` to it) — KeeperHub signs with its own non-custodial wallet, so `markVerified()`, which is `onlyOwner`, will otherwise revert. See `docs/integrations/keeperhub-mcp.md` for how to find that address.
+3. Set `KEEPERHUB_WEBHOOK_SECRET` to a random value — required by the frontend/worker handshake so nobody else can trigger paid executions on your account.
+4. (Optional) Set `KEEPERHUB_AUDIT_WEBHOOK` to receive per-stage trigger/simulation/outcome events.
 
-**Demo without a live mint:** `npm run demo:keeperhub -- <tokenId> <account>` calls `triggerPostMintVerification()` directly — useful for judging/demos when you want to show a real KeeperHub-executed transaction without walking through the full mint UI first.
+**Demo without a live mint:** `npm run demo:keeperhub -- <tokenId> <contractAddress>` runs the real simulate → execute → poll sequence directly — useful for judging/demos when you want to show a real KeeperHub-executed transaction without walking through the full mint UI first.
 
-See `docs/integrations/keeperhub-mcp.md` for the MCP connection details (used for building this integration via Claude Code), and `services/analysis/keeperhub.js` for the client implementation.
+See `docs/integrations/keeperhub-mcp.md` for the MCP connection details and API model, and `services/analysis/keeperhub.js` for the client implementation.
 
 ---
 

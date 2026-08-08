@@ -6,8 +6,9 @@
  *   GET  /result/:jobId     — poll for job result (stored in MongoDB)
  *   GET  /profile/:address  — fetch the latest stored result from MongoDB
  *   GET  /health            — health check
- *   POST /webhooks/keeperhub/post-mint — verify a Minted tx, then trigger
- *                              the KeeperHub markVerified() follow-up workflow
+ *   GET  /keeperhub/status  — KeeperHub config + connectivity check
+ *   POST /keeperhub/verify  — verify a Minted tx, then drive KeeperHub's
+ *                             Direct Execution flow to call markVerified()
  *
  * Hot-path transport: ZeroMQ push socket bound on QUEUE_ENDPOINT.
  * The worker process connects a pull socket to the same port and processes
@@ -26,8 +27,8 @@ import { listenForJobUpdates } from "./resultsChannel.js";
 import { verifyMintedEvent } from "./chain-data/mintEvents.js";
 import {
   isKeeperhubConfigured,
-  isAgenticWalletConfigured,
-  triggerPostMintVerification,
+  checkKeeperhubConnection,
+  verifyMintOnChain,
   KEEPERHUB_WEBHOOK_SECRET,
 } from "./keeperhub.js";
 
@@ -278,19 +279,38 @@ app.get("/health", async (_req, res) => {
 });
 
 /**
- * POST /webhooks/keeperhub/post-mint
+ * GET /keeperhub/status
+ * Reports whether KEEPERHUB_API_KEY is configured and, if so, whether
+ * KeeperHub actually accepts it (a real authenticated call, not just a
+ * local env-var presence check).
+ */
+app.get("/keeperhub/status", async (_req, res) => {
+  if (!isKeeperhubConfigured()) {
+    return res.json({ configured: false, connected: false });
+  }
+  try {
+    await checkKeeperhubConnection();
+    return res.json({ configured: true, connected: true });
+  } catch (err) {
+    return res.json({ configured: true, connected: false, error: err.message });
+  }
+});
+
+/**
+ * POST /keeperhub/verify
  *
  * Body: { txHash, contractAddress, network }
  *
  * Called after a client confirms a mint() transaction. We independently
- * verify the Minted event against Etherscan (never trust tokenId/account
- * from the caller directly — this route triggers a real, gas-spending
- * KeeperHub workflow) and, once confirmed, ask KeeperHub to execute the
- * markVerified(tokenId) follow-up via executeWorkflow().
+ * verify the Minted event against Etherscan (never trust a client-supplied
+ * tokenId/account directly — this route triggers a real, gas-spending
+ * KeeperHub execution) and, once confirmed, drive KeeperHub's Direct
+ * Execution simulate → execute → poll sequence to call markVerified(tokenId)
+ * on the deployed contract — see verifyMintOnChain() in keeperhub.js.
  *
  * Requires header `x-webhook-secret` matching KEEPERHUB_WEBHOOK_SECRET.
  */
-app.post("/webhooks/keeperhub/post-mint", async (req, res) => {
+app.post("/keeperhub/verify", async (req, res) => {
   if (!KEEPERHUB_WEBHOOK_SECRET || req.get("x-webhook-secret") !== KEEPERHUB_WEBHOOK_SECRET) {
     return res.status(401).json({ error: "Missing or invalid x-webhook-secret" });
   }
@@ -309,10 +329,10 @@ app.post("/webhooks/keeperhub/post-mint", async (req, res) => {
     });
   }
 
-  if (!isKeeperhubConfigured() || !isAgenticWalletConfigured()) {
+  if (!isKeeperhubConfigured()) {
     return res.status(503).json({
-      error: "KeeperHub automation is not configured on this deployment",
-      hint: "Set KEEPERHUB_API_KEY and KEEPERHUB_WALLET_PRIVATE_KEY to enable it.",
+      error: "KeeperHub is not configured on this deployment",
+      hint: "Set KEEPERHUB_API_KEY to enable it.",
     });
   }
 
@@ -328,18 +348,18 @@ app.post("/webhooks/keeperhub/post-mint", async (req, res) => {
       return res.status(404).json({ error: "No Minted event found for this transaction" });
     }
 
-    const result = await triggerPostMintVerification({ tokenId, account, mintTxHash: txHash });
+    const result = await verifyMintOnChain({ network, contractAddress, tokenId });
 
     return res.status(202).json({
       status: "triggered",
       tokenId,
       account,
-      protocolUsed: result?.protocol ?? null,
-      txHash: result?.txHash ?? null,
+      executionId: result.executionId,
+      txHash: result.status?.txHash ?? result.status?.transactionHash ?? null,
     });
   } catch (err) {
-    console.error("[api] KeeperHub post-mint webhook failed:", err.message);
-    return res.status(502).json({ error: "KeeperHub workflow execution failed", detail: err.message });
+    console.error("[api] KeeperHub verify failed:", err.message);
+    return res.status(502).json({ error: "KeeperHub execution failed", detail: err.message });
   }
 });
 

@@ -24,9 +24,23 @@ export const CONTRACT_ABI = [
     type: "function",
   },
   {
+    // NOTE: the contract's public state variable is `signer`, not
+    // `trustedSigner` (only the README/docs use the descriptive name
+    // "trusted signer" — the actual on-chain getter is `signer()`).
     inputs: [],
-    name: "trustedSigner",
+    name: "signer",
     outputs: [{ internalType: "address", name: "", type: "address" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    // Required for EIP-712 signing — mint()/updateScore() both bind the
+    // caller's current nonce into the signed struct hash, so the signer
+    // must read this before producing a signature or the recovered
+    // address won't match `signer` and the call reverts.
+    inputs: [{ internalType: "address", name: "account", type: "address" }],
+    name: "nonces",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
   },
@@ -45,6 +59,11 @@ export const CONTRACT_ABI = [
           },
           { internalType: "bool", name: "hasENS", type: "bool" },
           { internalType: "uint256", name: "mintedAt", type: "uint256" },
+          // Previously missing — the contract's DevMetadata struct has 6
+          // fields, not 5. With this omitted, ethers decoded the tuple
+          // against the wrong shape and either threw or silently
+          // misaligned every field after hasENS.
+          { internalType: "uint256", name: "updatedAt", type: "uint256" },
         ],
         internalType: "struct ProofOfDev.DevMetadata",
         name: "",
@@ -55,20 +74,16 @@ export const CONTRACT_ABI = [
     type: "function",
   },
   {
-    inputs: [],
-    name: "totalSupply",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }],
+    name: "isVerified",
+    outputs: [{ internalType: "bool", name: "", type: "bool" }],
     stateMutability: "view",
     type: "function",
   },
   {
-    // Set by KeeperHub's markVerified(tokenId) follow-up workflow — see
-    // services/analysis/keeperhub.js and the "KeeperHub post-mint
-    // automation" section of the README. Polled by MintButton to show the
-    // "Verified via KeeperHub" badge once the follow-up transaction lands.
-    inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }],
-    name: "isVerified",
-    outputs: [{ internalType: "bool", name: "", type: "bool" }],
+    inputs: [],
+    name: "totalSupply",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
     stateMutability: "view",
     type: "function",
   },
@@ -93,6 +108,16 @@ export const CONTRACT_ABI = [
     stateMutability: "nonpayable",
     type: "function",
   },
+  {
+    // Owner-only — called by the KeeperHub automation wallet as a post-mint
+    // follow-up (see contracts/ProofOfDev.sol). Included here for
+    // completeness/tooling; the dashboard never calls this itself.
+    inputs: [{ internalType: "uint256", name: "tokenId", type: "uint256" }],
+    name: "markVerified",
+    outputs: [],
+    stateMutability: "nonpayable",
+    type: "function",
+  },
   // Events
   {
     anonymous: false,
@@ -112,6 +137,20 @@ export const CONTRACT_ABI = [
       },
     ],
     name: "Minted",
+    type: "event",
+  },
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        internalType: "uint256",
+        name: "tokenId",
+        type: "uint256",
+      },
+      { indexed: true, internalType: "address", name: "by", type: "address" },
+    ],
+    name: "Verified",
     type: "event",
   },
 ] as const;

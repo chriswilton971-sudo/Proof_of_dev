@@ -5,23 +5,32 @@
  * Flow:
  *   1. Server fetches the canonical (MongoDB-backed) profile for the address —
  *      never trusts a client-supplied score.
- *   2. Server signs an EIP-712 "MintAuthorization" typed message binding that
- *      score to the recipient address and a short-lived deadline.
+ *   2. Server signs an EIP-712 "MintAttestation" typed message binding that
+ *      score, the caller's current on-chain nonce, and a short-lived
+ *      deadline together.
  *   3. Client submits the signature on-chain via mint(); the contract
- *      recovers the signer and checks it against `trustedSigner`.
+ *      recovers the signer and checks it against `signer` (the address the
+ *      README refers to as the "trusted signer").
  *
  * The typed-data domain and struct here MUST match contracts/ProofOfDev.sol
- * exactly — name, version, chainId, verifyingContract, and field order/types
- * all feed into the EIP-712 hash. If you change one side, change both.
+ * exactly — type name, field names/order/types, and the domain (name,
+ * version, chainId, verifyingContract) all feed into the EIP-712 hash. Any
+ * mismatch produces a signature that recovers to the wrong address and the
+ * contract reverts with UnauthorizedAttestation. Concretely, this must match
+ * MINT_TYPEHASH in the contract:
+ *   "MintAttestation(address to,uint256 score,uint256 contractCount,uint256 verifiedContractCount,bool hasENS,uint256 nonce,uint256 deadline)"
+ * — note `to` (not `recipient`) and the required `nonce` field, which the
+ * contract folds into every struct hash via `_authorize()` so a signature
+ * can never be replayed after its first successful use.
  *
  * Required env var (server-side only, never exposed to client):
- *   MINT_SIGNER_PRIVATE_KEY — private key of the trustedSigner wallet set on
+ *   MINT_SIGNER_PRIVATE_KEY — private key of the signer wallet set on
  *   the deployed contract. This wallet does NOT need ETH (it only signs off
  *   -chain; the user's wallet pays gas for the mint transaction itself).
  */
 
 import { ethers } from "ethers";
-import { CONTRACT_ADDRESS } from "@/lib/contract";
+import { CONTRACT_ADDRESS, CONTRACT_ABI } from "@/lib/contract";
 import { fetchCanonicalProfile } from "@/lib/api/canonicalProfile";
 import { logger } from "@/lib/logger";
 
@@ -43,11 +52,26 @@ function getSigner(): ethers.Wallet {
   if (!privateKey) {
     throw new Error(
       "MINT_SIGNER_PRIVATE_KEY is not set. Add it to .env.local to enable minting. " +
-        "It must match the trustedSigner address passed to the contract constructor."
+        "It must match the `signer` address passed to the contract constructor."
     );
   }
   // No provider needed — this wallet only signs typed data, it never sends a tx.
   return new ethers.Wallet(privateKey);
+}
+
+/**
+ * Reads the caller's current nonce from the deployed contract. Required
+ * because the contract folds `nonces[msg.sender]` into every signed struct
+ * hash (see MINT_TYPEHASH above) — signing with a stale or omitted nonce
+ * produces a signature that will never recover to `signer`.
+ */
+async function getOnChainNonce(recipient: string): Promise<bigint> {
+  const provider = new ethers.JsonRpcProvider(
+    `https://eth-sepolia.g.alchemy.com/v2/${process.env.NEXT_PUBLIC_ALCHEMY_API_KEY ?? ""}`
+  );
+  const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
+  const nonce: bigint = await contract.nonces(recipient);
+  return nonce;
 }
 
 /**
@@ -69,6 +93,7 @@ export async function createMintAuthorization(
   const verifiedContractCount = BigInt(profile.verifiedContractCount);
   const hasENS = Boolean(profile.ensName);
   const deadline = BigInt(Math.floor(Date.now() / 1000) + AUTHORIZATION_TTL_SECONDS);
+  const nonce = await getOnChainNonce(recipient);
 
   const signer = getSigner();
 
@@ -79,28 +104,32 @@ export async function createMintAuthorization(
     verifyingContract: CONTRACT_ADDRESS,
   };
 
-  // Field order/types must match the contract's MintAuthorization typehash exactly.
+  // Field name/order/types must match the contract's MINT_TYPEHASH exactly —
+  // see the header comment above. Field name is `to`, not `recipient`, and
+  // `nonce` is required.
   const types = {
-    MintAuthorization: [
-      { name: "recipient", type: "address" },
+    MintAttestation: [
+      { name: "to", type: "address" },
       { name: "score", type: "uint256" },
       { name: "contractCount", type: "uint256" },
       { name: "verifiedContractCount", type: "uint256" },
       { name: "hasENS", type: "bool" },
+      { name: "nonce", type: "uint256" },
       { name: "deadline", type: "uint256" },
     ],
   };
 
   const value = {
-    recipient,
+    to: recipient,
     score,
     contractCount,
     verifiedContractCount,
     hasENS,
+    nonce,
     deadline,
   };
 
-  logger.info("[mint] Signing mint authorization", { recipient, score: score.toString() });
+  logger.info("[mint] Signing mint authorization", { recipient, score: score.toString(), nonce: nonce.toString() });
 
   const rawSignature = await signer.signTypedData(domain, types, value);
   const { v, r, s } = ethers.Signature.from(rawSignature);

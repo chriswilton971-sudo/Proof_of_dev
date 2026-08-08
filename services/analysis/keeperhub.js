@@ -1,49 +1,88 @@
 /**
- * KeeperHub MCP/REST client.
+ * KeeperHub Direct Execution client.
  *
- * Covers: connectivity check, agentic-wallet config guard, dual x402/MPP
- * payment routing, and audit-trail webhook logging.
+ * Wires the app to a real, demoable on-chain action: after a wallet mints
+ * its ProofOfDev NFT, `verifyMintOnChain()` has KeeperHub's automation
+ * wallet call `markVerified(tokenId)` on the contract — the exact hook
+ * contracts/ProofOfDev.sol documents as "intended to be called by an
+ * automation bot (e.g. a KeeperHub workflow) as a post-mint follow-up
+ * step." That function is `onlyOwner`, so ownership must be transferred to
+ * (or the contract deployed with) the wallet address KeeperHub provisions
+ * for this org — see docs/integrations/keeperhub-mcp.md.
  *
- * IMPORTANT: KEEPERHUB_WALLET_PRIVATE_KEY is read from process.env only.
- * It is never logged, never included in error messages, and this module
- * never echoes it back in any response. Set it via your host's secret
- * manager (GitHub Actions secrets / Replit Secrets) — never commit it,
- * never print it.
+ * Follows KeeperHub's documented Safe First-Write Sequence:
+ *   1. simulate: true   — dry-run, no broadcast, surfaces revert reasons early
+ *   2. execute for real — with an Idempotency-Key so a retried request can
+ *      never double-submit the same on-chain write
+ *   3. poll execution status until it reaches a terminal state
  *
- * See docs/integrations/keeperhub-mcp.md for setup and context.
+ * Every call also posts a local audit event (trigger / simulation / outcome,
+ * with tx hash and gas used once known) to KEEPERHUB_AUDIT_WEBHOOK if
+ * configured — KeeperHub's own dashboard already tracks this per-execution,
+ * but a local, app-controlled record is worth the one extra fetch.
+ *
+ * Field names (`network`, `address`, `abiFunction`, `args`) follow the
+ * naming KeeperHub uses for its web3/write-contract action config
+ * (confirmed via docs.keeperhub.com/ai-tools/mcp-server). The exact request
+ * body for the single-call Direct Execution endpoint is documented at
+ * docs.keeperhub.com/api/direct-execution — re-check this shape against
+ * that page (everything below is isolated in buildExecutionRequestBody()
+ * for exactly this reason) before relying on it for a real broadcast.
+ *
+ * See docs/integrations/keeperhub-mcp.md for setup, auth, and status.
  */
 
-import { fetchJson } from "./chain-data/http.js";
+import { Interface } from "ethers";
+import { randomUUID } from "crypto";
+import { sleep } from "./chain-data/http.js";
+import { chainIdFromNetwork } from "./config.js";
 
-export const KEEPERHUB_BASE_URL      = process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com";
-export const KEEPERHUB_MCP_URL       = process.env.KEEPERHUB_MCP_URL ?? `${KEEPERHUB_BASE_URL}/mcp`;
-export const KEEPERHUB_API_KEY       = process.env.KEEPERHUB_API_KEY ?? "";
-export const KEEPERHUB_AUDIT_WEBHOOK = process.env.KEEPERHUB_AUDIT_WEBHOOK ?? "";
+export const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com";
+export const KEEPERHUB_API_KEY  = process.env.KEEPERHUB_API_KEY ?? "";
 
-// KeeperHub workflow ID that calls ProofOfDev.markVerified(tokenId) as the
-// post-mint follow-up step (see contracts/ProofOfDev.sol). Configure this
-// once you've created the workflow in the KeeperHub dashboard/API.
-export const KEEPERHUB_MARKVERIFIED_WORKFLOW_ID =
-  process.env.KEEPERHUB_MARKVERIFIED_WORKFLOW_ID ?? "";
-
-// Shared secret the caller of POST /webhooks/keeperhub/post-mint must send
-// back as `x-webhook-secret`. This gates a route that spends real gas via an
-// autonomous wallet — never leave it unset outside local/mock development.
+// Shared secret the caller of POST /keeperhub/verify must send back as
+// `x-webhook-secret`. This gates a route that (once a real Minted event is
+// confirmed) drives a real, gas-spending KeeperHub execution — never leave
+// it unset outside local/mock development.
 export const KEEPERHUB_WEBHOOK_SECRET = process.env.KEEPERHUB_WEBHOOK_SECRET ?? "";
 
-// "dual" | "x402" | "mpp" — dual lets KeeperHub auto-select per call.
-export const KEEPERHUB_PAYMENT_MODE = process.env.KEEPERHUB_PAYMENT_MODE ?? "x402";
+// Optional: URL that receives {stage, ...} audit events for each Direct
+// Execution call — trigger, simulation result, submitted tx, gas used,
+// outcome, timestamp, matching the audit-trail shape KeeperHub's own
+// platform tracks natively. This is a belt-and-suspenders local record —
+// KeeperHub's dashboard already logs the same data per execution — but
+// having it land somewhere this app controls too (and can show a judge
+// without a KeeperHub login) is worth the one extra fetch call.
+export const KEEPERHUB_AUDIT_WEBHOOK = process.env.KEEPERHUB_AUDIT_WEBHOOK ?? "";
 
-// Ordered preference list used only when PAYMENT_MODE is "dual".
-export const KEEPERHUB_PAYMENT_PREF = (process.env.KEEPERHUB_PAYMENT_PREF ?? "x402,mpp")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
+async function logAuditEvent(event) {
+  if (!KEEPERHUB_AUDIT_WEBHOOK) return;
+  try {
+    await fetch(KEEPERHUB_AUDIT_WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...event, timestamp: new Date().toISOString() }),
+    });
+  } catch (err) {
+    // Never let audit logging itself break the actual execution flow.
+    console.warn("[keeperhub] audit webhook post failed:", err.message);
+  }
+}
+
+// ProofOfDev.markVerified(uint256) — the one write call this integration
+// currently makes. Kept as a minimal, single-function ABI fragment rather
+// than importing the full contract ABI, since that's all KeeperHub needs
+// to encode the call.
+const MARK_VERIFIED_ABI = ["function markVerified(uint256 tokenId)"];
+const markVerifiedIface = new Interface(MARK_VERIFIED_ABI);
+
+const DEFAULT_POLL_INTERVAL_MS = 3000;
+const DEFAULT_POLL_TIMEOUT_MS  = 2 * 60 * 1000; // 2 minutes
 
 function isPlaceholderKey(val) {
   if (!val || !String(val).trim()) return true;
   const v = String(val).trim();
-  return v.includes("your_") || v.includes("_here") || /^0x0+$/.test(v);
+  return v.includes("your_") || v.includes("_here");
 }
 
 /** True when KEEPERHUB_API_KEY isn't set to a real value yet. */
@@ -51,128 +90,171 @@ export function isKeeperhubConfigured() {
   return !isPlaceholderKey(KEEPERHUB_API_KEY);
 }
 
-/**
- * True when a wallet key is present for autonomous signing. Never returns
- * or logs the key itself — callers should only ever check this boolean.
- */
-export function isAgenticWalletConfigured() {
-  return !isPlaceholderKey(process.env.KEEPERHUB_WALLET_PRIVATE_KEY ?? "");
-}
-
 async function keeperhubRequest(path, options = {}) {
   if (!isKeeperhubConfigured()) {
     throw new Error("KEEPERHUB_API_KEY is not configured");
   }
 
-  return fetchJson(`${KEEPERHUB_BASE_URL}${path}`, {
+  const resp = await fetch(`${KEEPERHUB_BASE_URL}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${KEEPERHUB_API_KEY}`,
+      "Content-Type": "application/json",
       ...(options.headers ?? {}),
     },
   });
-}
 
-/**
- * Basic connectivity check against the MCP endpoint's status info.
- * Not a real workflow call — just confirms the key/base URL work.
- */
-export async function checkKeeperhubConnection() {
-  return keeperhubRequest("/mcp", { method: "GET" });
-}
-
-/**
- * Best-effort audit log post. Failures here never block the caller —
- * audit logging is observability, not a transaction gate.
- */
-export async function logAuditEvent(event) {
-  if (!KEEPERHUB_AUDIT_WEBHOOK) return { skipped: true };
-  const entry = { timestamp: new Date().toISOString(), ...event };
+  const bodyText = await resp.text();
+  let body = null;
   try {
-    await fetchJson(KEEPERHUB_AUDIT_WEBHOOK, {
-      method: "POST",
-      body: JSON.stringify(entry),
-    });
-    return { logged: true };
-  } catch (err) {
-    console.error("[keeperhub] audit webhook failed:", err.message);
-    return { logged: false, error: err.message };
-  }
-}
-
-/**
- * Submit an execution request and let KeeperHub route it over x402 or MPP
- * depending on KEEPERHUB_PAYMENT_MODE. Every call is audit-logged
- * regardless of outcome (trigger + result), per KeeperHub's own audit-trail
- * model (trigger, simulation, submitted tx, gas used, outcome, timestamp).
- *
- * @param {object} params
- * @param {string} params.workflowId - KeeperHub workflow/action identifier.
- * @param {object} params.input - Payload for the workflow.
- */
-export async function executeWorkflow({ workflowId, input }) {
-  if (!isAgenticWalletConfigured()) {
-    throw new Error(
-      "KEEPERHUB_WALLET_PRIVATE_KEY is not configured — refusing to submit " +
-      "an autonomous-payment workflow without a signing key."
-    );
+    body = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    body = bodyText;
   }
 
-  const paymentMode = KEEPERHUB_PAYMENT_MODE === "dual"
-    ? { mode: "dual", preference: KEEPERHUB_PAYMENT_PREF }
-    : { mode: KEEPERHUB_PAYMENT_MODE };
-
-  await logAuditEvent({ stage: "trigger", workflowId, paymentMode });
-
-  try {
-    const result = await keeperhubRequest(`/v1/workflows/${workflowId}/execute`, {
-      method: "POST",
-      body: JSON.stringify({ input, payment: paymentMode }),
-    });
-
-    await logAuditEvent({
-      stage: "outcome",
-      workflowId,
-      status: "success",
-      txHash: result?.txHash ?? null,
-      gasUsed: result?.gasUsed ?? null,
-      protocolUsed: result?.protocol ?? null, // "x402" | "mpp"
-    });
-
-    return result;
-  } catch (err) {
-    await logAuditEvent({
-      stage: "outcome",
-      workflowId,
-      status: "error",
-      error: err.message,
-    });
+  if (!resp.ok) {
+    const detail = body && typeof body === "object" ? (body.detail ?? body.error) : body;
+    const err = new Error(`KeeperHub ${options.method ?? "GET"} ${path} → HTTP ${resp.status}${detail ? `: ${detail}` : ""}`);
+    err.status = resp.status;
+    err.body = body;
     throw err;
   }
+
+  return { body, headers: resp.headers };
 }
 
 /**
- * The actual post-mint automation: after a Minted event is confirmed
- * on-chain (see chain-data/mintEvents.js — callers must verify this before
- * calling here), route a markVerified(tokenId) execution request through
- * KeeperHub via executeWorkflow().
- *
- * This is the one place in the app that turns "we saw a mint" into "we
- * asked KeeperHub to land a follow-up transaction" — the whole point of
- * the KeeperHub integration.
- *
- * @param {{ tokenId: string, account: string, mintTxHash: string }} params
+ * Connectivity/auth check against a real, authenticated REST endpoint.
+ * (Not `/mcp` — that path is the MCP JSON-RPC transport, which expects a
+ * protocol handshake, not a plain GET, so it isn't a meaningful health
+ * check on its own.)
  */
-export async function triggerPostMintVerification({ tokenId, account, mintTxHash }) {
-  if (!KEEPERHUB_MARKVERIFIED_WORKFLOW_ID) {
-    throw new Error(
-      "KEEPERHUB_MARKVERIFIED_WORKFLOW_ID is not configured — create the " +
-      "markVerified workflow in KeeperHub and set its ID before calling this.",
-    );
+export async function checkKeeperhubConnection() {
+  const { body } = await keeperhubRequest("/api/api-keys", { method: "GET" });
+  return body;
+}
+
+/**
+ * Builds the calldata for `markVerified(tokenId)`. Pure/offline — no
+ * network call, safe to unit test.
+ */
+export function buildMarkVerifiedCalldata(tokenId) {
+  return markVerifiedIface.encodeFunctionData("markVerified", [BigInt(tokenId)]);
+}
+
+function buildExecutionRequestBody({ network, contractAddress, tokenId, simulate }) {
+  const chainId = chainIdFromNetwork(network);
+  return {
+    network: String(chainId),
+    address: contractAddress,
+    abiFunction: "function markVerified(uint256 tokenId)",
+    args: [String(tokenId)],
+    data: buildMarkVerifiedCalldata(tokenId),
+    simulate: Boolean(simulate),
+  };
+}
+
+/** Dry-run only — never broadcasts. Surfaces revert reasons before a real write. */
+export async function simulateMarkVerified({ network, contractAddress, tokenId }) {
+  const { body } = await keeperhubRequest("/api/execute/contract-call", {
+    method: "POST",
+    body: JSON.stringify(buildExecutionRequestBody({ network, contractAddress, tokenId, simulate: true })),
+  });
+  return body;
+}
+
+/**
+ * Broadcasts the real transaction. `idempotencyKey` should be stable for a
+ * given (tokenId, contractAddress, network) so a client retry can never
+ * cause a double-submit — callers that don't pass one get a fresh random
+ * key, which is safe but does NOT dedupe retries; verifyMintOnChain() below
+ * always passes a deterministic one.
+ */
+export async function executeMarkVerified({ network, contractAddress, tokenId, idempotencyKey }) {
+  const { body } = await keeperhubRequest("/api/execute/contract-call", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey ?? randomUUID() },
+    body: JSON.stringify(buildExecutionRequestBody({ network, contractAddress, tokenId, simulate: false })),
+  });
+  return body; // expected to include an execution id to poll
+}
+
+/** GET /api/execute/{id}/status — single poll, no waiting. */
+export async function getExecutionStatus(executionId) {
+  const { body, headers } = await keeperhubRequest(`/api/execute/${executionId}/status`, { method: "GET" });
+  const hintMs = Number(headers.get?.("x-poll-interval-hint"));
+  return { ...body, pollIntervalHintMs: Number.isFinite(hintMs) && hintMs > 0 ? hintMs : null };
+}
+
+const TERMINAL_STATUSES = new Set(["success", "succeeded", "completed", "failed", "error", "reverted", "cancelled"]);
+
+/** Polls until the execution reaches a terminal state or the timeout elapses. */
+export async function pollExecutionUntilDone(executionId, { timeoutMs = DEFAULT_POLL_TIMEOUT_MS } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  let intervalMs = DEFAULT_POLL_INTERVAL_MS;
+
+  while (Date.now() < deadline) {
+    const status = await getExecutionStatus(executionId);
+    const state = String(status.status ?? "").toLowerCase();
+
+    if (TERMINAL_STATUSES.has(state)) {
+      return status;
+    }
+
+    intervalMs = status.pollIntervalHintMs ?? intervalMs;
+    await sleep(intervalMs);
   }
 
-  return executeWorkflow({
-    workflowId: KEEPERHUB_MARKVERIFIED_WORKFLOW_ID,
-    input: { tokenId, account, mintTxHash },
+  throw new Error(`KeeperHub execution ${executionId} did not reach a terminal state within ${timeoutMs}ms`);
+}
+
+/**
+ * High-level entry point: simulate → execute → poll for one
+ * markVerified(tokenId) call. Throws if simulation fails (nothing is
+ * broadcast in that case) or if the real execution ultimately fails.
+ */
+export async function verifyMintOnChain({ network, contractAddress, tokenId }) {
+  if (!contractAddress) {
+    throw new Error("contractAddress is required (NEXT_PUBLIC_CONTRACT_ADDRESS is unset)");
+  }
+
+  await logAuditEvent({ stage: "trigger", network, contractAddress, tokenId, action: "markVerified" });
+
+  const simulation = await simulateMarkVerified({ network, contractAddress, tokenId });
+  if (simulation?.success === false || simulation?.willRevert === true) {
+    const reason = simulation?.revertReason ?? simulation?.error ?? "simulation indicated the call would fail";
+    await logAuditEvent({ stage: "simulation", tokenId, status: "would_revert", reason });
+    throw new Error(`KeeperHub simulation failed for markVerified(${tokenId}): ${reason}`);
+  }
+  await logAuditEvent({ stage: "simulation", tokenId, status: "ok" });
+
+  // Deterministic per (contract, network, tokenId, action) — a retried
+  // request for the same token is a no-op on KeeperHub's side rather than
+  // a second broadcast.
+  const idempotencyKey = `pod-mark-verified-${contractAddress.toLowerCase()}-${network}-${tokenId}`;
+
+  const execution = await executeMarkVerified({ network, contractAddress, tokenId, idempotencyKey });
+  const executionId = execution?.id ?? execution?.executionId;
+  if (!executionId) {
+    await logAuditEvent({ stage: "outcome", tokenId, status: "error", error: "no executionId returned" });
+    throw new Error("KeeperHub execute response did not include an execution id to poll");
+  }
+
+  const finalStatus = await pollExecutionUntilDone(executionId);
+  const state = String(finalStatus.status ?? "").toLowerCase();
+
+  await logAuditEvent({
+    stage: "outcome",
+    tokenId,
+    executionId,
+    status: state,
+    txHash: finalStatus.txHash ?? finalStatus.transactionHash ?? null,
+    gasUsed: finalStatus.gasUsed ?? null,
   });
+
+  if (state === "failed" || state === "error" || state === "reverted") {
+    throw new Error(`KeeperHub execution ${executionId} finished with status "${state}"`);
+  }
+
+  return { executionId, tokenId, network, status: finalStatus };
 }

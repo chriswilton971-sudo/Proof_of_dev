@@ -27,12 +27,18 @@
     "demo:keeperhub": "node scripts/keeperhub-demo.js",
     "test:scoring": "node --test tests/scoring-parity.test.js",
     "test:keeperhub": "node --test tests/keeperhub.test.js",
-    "test": "npm run test:scoring && npm run test:keeperhub"
+    "test:keeperhub-calldata": "node --test tests/keeperhub-calldata.test.js",
+    "test:contract": "hardhat test --config hardhat.config.cjs",
+    "test": "npm run test:scoring && npm run test:keeperhub && npm run test:keeperhub-calldata && npm run test:contract"
   },
   "devDependencies": {
     "@ethereum-attestation-service/eas-sdk": "2.9.0",
+    "@nomicfoundation/hardhat-chai-matchers": "^2.1.2",
+    "@nomicfoundation/hardhat-ethers": "^3.1.3",
+    "chai": "^4.5.0",
     "dotenv": "^16.4.7",
     "ethers": "^6.16.0",
+    "hardhat": "^2.29.0",
     "solc": "^0.8.24",
     "tsx": "^4.22.4"
   }

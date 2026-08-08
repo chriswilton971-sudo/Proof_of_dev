@@ -19,6 +19,8 @@ dist/
 build/
 coverage/
 artifacts/
+artifacts-hardhat/
+cache/
 services/indexer/target/
 
 # ── Misc ──────────────────────────────────────────────────────────────────────

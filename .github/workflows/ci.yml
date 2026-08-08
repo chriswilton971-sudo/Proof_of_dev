@@ -86,8 +86,39 @@ jobs:
       - name: Run KeeperHub client tests
         run: npm run test:keeperhub
 
+      # Pure/offline — encodes calldata and diffs against a fresh ethers
+      # Interface. No network or KeeperHub credentials needed, so unlike
+      # the keeperhub-smoke-test job this runs (and must pass) on every PR.
+      - name: Run KeeperHub calldata tests
+        run: npm run test:keeperhub-calldata
+
       - name: Build web app
         run: npm run build
+
+  contract-tests:
+    name: Solidity contract test suite (Hardhat)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Node version from .nvmrc
+        id: nvmrc
+        run: echo "version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.nvmrc.outputs.version }}
+          cache: npm
+
+      - name: npm install
+        run: npm install
+
+      # This runner has real internet access, so Hardhat downloads its own
+      # solc binary normally here — no local-artifact workaround needed.
+      - name: Run contract test suite
+        run: npm run test:contract
 
   solidity-check:
     name: Solidity compile check
@@ -122,6 +153,52 @@ jobs:
       - name: cargo check
         working-directory: services/indexer
         run: cargo check --locked
+
+  keeperhub-smoke-test:
+    name: KeeperHub connectivity smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read Node version from .nvmrc
+        id: nvmrc
+        run: echo "version=$(cat .nvmrc)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ steps.nvmrc.outputs.version }}
+          cache: npm
+
+      - name: npm install
+        run: npm install
+
+      # Never fails CI red just because the secret is absent — this is the
+      # normal case for forks and most PRs, which don't have access to repo
+      # secrets. When KEEPERHUB_API_KEY *is* set, this genuinely calls
+      # KeeperHub (a real authenticated request, not a mock) and fails the
+      # job if that call errors, so a broken key/base-url is still caught.
+      - name: Check KeeperHub connectivity
+        working-directory: services/analysis
+        env:
+          KEEPERHUB_API_KEY: ${{ secrets.KEEPERHUB_API_KEY }}
+          KEEPERHUB_BASE_URL: ${{ secrets.KEEPERHUB_BASE_URL }}
+        run: |
+          node --input-type=module -e '
+            const { isKeeperhubConfigured, checkKeeperhubConnection } = await import("./keeperhub.js");
+            if (!isKeeperhubConfigured()) {
+              console.log("KEEPERHUB_API_KEY not set in this run (expected on forks/most PRs) — skipping.");
+              process.exit(0);
+            }
+            try {
+              await checkKeeperhubConnection();
+              console.log("KeeperHub connectivity OK.");
+            } catch (err) {
+              console.error("KeeperHub connectivity check failed:", err.message);
+              process.exit(1);
+            }
+          '
 
   secret-scan:
     name: Secret scan

@@ -1,49 +1,74 @@
-# Prompt for a KeeperHub-MCP-connected agent (Claude Code / Cursor)
+# Prompt for a KeeperHub-MCP-connected agent (Claude Code)
 
-Paste this after `/keeperhub:login` succeeds. Fill in `<CONTRACT_ADDRESS>`
-with the deployed Sepolia address of ProofOfDev.sol (from
-`NEXT_PUBLIC_CONTRACT_ADDRESS` in your `.env.local` once deployed).
+Run this after connecting per `docs/integrations/keeperhub-copilot-agent.md`
+(`claude mcp add --transport http --scope user keeperhub https://app.keeperhub.com/mcp`,
+then `/mcp` to authorize). Fill in `<CONTRACT_ADDRESS>` with the deployed
+Sepolia address of `ProofOfDev.sol` (from `NEXT_PUBLIC_CONTRACT_ADDRESS` in
+`.env.local` once deployed).
 
 ---
 
-Deploy a KeeperHub workflow on Sepolia with these exact properties:
+Using the KeeperHub MCP tools, create a workflow with these requirements:
 
 **Name:** `proof-of-dev-mark-verified`
 
-**Trigger:** API/webhook trigger (invoked programmatically — not scheduled,
-not onchain-event-based). It should accept an input payload shaped like:
+**Trigger:** Manual (this repo's own backend calls it via the REST API's
+`POST /api/workflows/{id}/execute`, not a KeeperHub-native webhook/event
+trigger — see `services/analysis/keeperhub.js`)
 
-```json
-{
-  "tokenId": "number",
-  "account": "string (address, informational only)",
-  "mintTxHash": "string (informational only)"
-}
+**Trigger input:** `{ "tokenId": number, "account": string, "mintTxHash": string }`
+— only `tokenId` is used on-chain; `account` and `mintTxHash` just need to
+flow through to the execution's audit log for cross-referencing against the
+actual mint transaction.
+
+**Action:** A single Web3 write-contract step:
+- Network: Sepolia (chain ID `11155111`)
+- Contract address: `<CONTRACT_ADDRESS>`
+- Function: `markVerified(uint256 tokenId)` -- bind `tokenId` to the trigger
+  input's `tokenId` field
+- The ABI only needs to include `markVerified` (and ideally `isVerified`
+  for reference) -- pull it from `contracts/ProofOfDev.sol` in this repo,
+  don't guess it
+
+**Steps to actually do this, in order:**
+
+1. Call `list_action_schemas` with category `web3` to confirm the exact
+   required fields for `web3/write-contract` right now -- the schema can
+   change, don't assume the shape from any written description (including
+   this one).
+2. Call `ai_generate_workflow` with a natural-language description of the
+   above (trigger + single write-contract action). This is the safest way
+   to get the node/edge graph right -- it's built for exactly this, and
+   hand-written node/edge JSON risks getting the templating syntax
+   (`{{@nodeId:Label.field}}`) wrong.
+3. Call `validate_workflow` on the result before creating anything --
+   catches structural and Web3-specific errors early.
+4. Call `create_workflow` with `enabled=false` first (the default) --
+   there's no reason to make this live until it's been tested once.
+5. Call `execute_workflow` with a real minted `tokenId`/`account` to test
+   it, then `get_execution` to check the result.
+6. Once confirmed working, `update_workflow` with `enabled=true` if you
+   want it to also respond to something other than the manual REST trigger
+   -- not required for this project's flow, since the backend always
+   triggers it explicitly after verifying a mint.
+
+**Critical constraint -- check this before step 5, not after:**
+`markVerified` is `onlyOwner` on the contract. Whichever wallet KeeperHub
+signs with for this org needs to actually own the contract:
+
+```
+get_wallet_integration
 ```
 
-**Action:** A single contract-call step:
-- Network: Sepolia
-- Contract address: `<CONTRACT_ADDRESS>`
-- Function: `markVerified(uint256 tokenId)`
-- Argument `tokenId`: bind to the trigger input's `tokenId` field
-- `account` and `mintTxHash` are not used in the contract call itself —
-  they're passed through only so they show up in the execution's audit
-  log for cross-referencing against the actual mint transaction
-
-**Important constraint:** `markVerified` is `onlyOwner` on the contract —
-only the address that owns the contract can call it successfully. Before
-running this workflow for real:
-1. Confirm which wallet KeeperHub will sign with for this workflow
-2. Either deploy the contract with that wallet as the owner, or call
-   `transferOwnership(newOwner)` from the current owner to hand ownership
-   to KeeperHub's wallet
-3. If you skip this, every execution will revert on-chain with no
-   custom-error message beyond "caller is not the owner" — the workflow
-   will show as failed, not silently no-op
+to see which wallet KeeperHub will use, then either deploy the contract
+with that address as the owner, or call `transferOwnership(newOwner)` from
+the current owner. Skipping this means every execution reverts on-chain
+with "caller is not the owner" -- the workflow will show as a failed
+execution, not an obvious setup error.
 
 **Gas:** Sepolia is not covered by KeeperHub's Mainnet-only gas
-sponsorship — confirm the signing wallet has its own Sepolia ETH balance
-before the first real run.
+sponsorship. Confirm the signing wallet has its own Sepolia ETH before the
+first real (non-simulated) execution.
 
 Once created, give me back the workflow ID so I can set
 `KEEPERHUB_MARKVERIFIED_WORKFLOW_ID` in `.env.local`.
@@ -52,14 +77,14 @@ Once created, give me back the workflow ID so I can set
 
 ## After it's created
 
-Verify locally before trusting it in a live demo:
+Verify from this repo, not just from the MCP tool output:
 
 ```bash
-npm run check:env    # should print "✓ KeeperHub fully configured"
+npm run check:env    # should print "OK KeeperHub fully configured"
 npm run demo:keeperhub -- <tokenId> <account>
 ```
 
 `<tokenId>` must belong to a token that's already been minted (the
 contract reverts with `TokenDoesNotExist` otherwise) and not already
-verified (`AlreadyVerified` otherwise) — so run one real mint through the
+verified (`AlreadyVerified` otherwise) -- mint one for real through the
 dashboard first, then use that token's ID here.

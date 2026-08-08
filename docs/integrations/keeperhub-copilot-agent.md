@@ -1,145 +1,78 @@
-# KeeperHub × GitHub Copilot Agent Integration
+# KeeperHub × Claude Code / Copilot Agent Integration
 
-This guide enables your GitHub Copilot agent to autonomously deploy and execute on-chain workflows via KeeperHub.
+Connects an AI coding agent directly to KeeperHub's own **remote** MCP
+server, so it can create, execute, and monitor onchain workflows using
+KeeperHub's real tool surface — no custom server needed.
 
-## What Your Agent Can Do
+An earlier version of this integration shipped a hand-written local MCP
+server (`services/mcp/keeperhub-server.js`) that reimplemented a handful of
+tools (`authenticate`, `create_workflow`, `execute_workflow`, ...) against
+the REST API directly. That's been removed: KeeperHub already hosts a full
+MCP server with 30+ real tools at `https://app.keeperhub.com/mcp` (see
+[docs.keeperhub.com/ai-tools/mcp-server](https://docs.keeperhub.com/ai-tools/mcp-server)),
+and the hand-rolled version didn't match its actual tool names or
+`create_workflow`'s real node/edge schema. Connect to the real one instead.
 
-After setup:
-1. **Authenticate** — Link your KeeperHub account with one API key
-2. **Deploy Workflows** — Create automation workflows that call smart contracts
-3. **Execute Workflows** — Run them with full KeeperHub handling:
-   - ✅ Gas simulation and optimization
-   - ✅ Automatic retries on stalls
-   - ✅ MEV-protected submission
-   - ✅ Complete audit trail
+## Setup
 
-## Quick Start
-
-### 1. Get KeeperHub API Key
-
-1. Go to [app.keeperhub.com](https://app.keeperhub.com)
-2. Settings → API Keys → Organisation
-3. Create a new API key (prefix: `kh_`)
-
-### 2. Configure Environment
-
-Add to `.env.local`:
+### 1. Connect to KeeperHub's MCP server
 
 ```bash
-# Required
-KEEPERHUB_API_KEY=kh_your_key_here
-
-# For autonomous execution (your agentic wallet)
-KEEPERHUB_WALLET_PRIVATE_KEY=0x...
+claude mcp add --transport http --scope user keeperhub https://app.keeperhub.com/mcp
 ```
 
-### 3. Use Your Agent
+Then run `/mcp` inside Claude Code and approve the OAuth flow in your
+browser. For headless/CI environments without browser access, pass an API
+key instead (Settings → API Keys → Organisation on app.keeperhub.com):
 
-Ask your Copilot agent:
-
-```
-"Authenticate me with KeeperHub using API key kh_..."
-```
-
-Agent responds with your organization and workflow count.
-
-## Agent Commands
-
-### Deploy a Workflow
-
-```
-"Create a KeeperHub workflow that calls markVerified(tokenId) on 
-contract 0x1234... on Sepolia, taking tokenId, account, mintTxHash as input"
+```bash
+claude mcp add --transport http --scope user keeperhub https://app.keeperhub.com/mcp \
+  --header "Authorization: Bearer kh_your_key_here"
 ```
 
-Agent returns workflow ID for later execution.
+`.mcp.json` in this repo is configured for the API-key form, reading
+`KEEPERHUB_API_KEY` from your environment — useful if you want the
+connection auto-discovered per-checkout rather than added manually per
+machine.
 
-### Execute a Workflow
+### 2. Ask your agent to deploy the markVerified workflow
 
-```
-"Execute workflow wf_abc123 with tokenId=42 and account=0x..."
-```
+See [`keeperhub-mcp-workflow-setup.md`](./keeperhub-mcp-workflow-setup.md)
+for the exact spec — it needs a specific node/edge graph
+(`web3/write-contract` action calling `markVerified(uint256)` on Sepolia),
+not just a name and a function signature.
 
-Agent triggers execution and returns transaction hash + gas used.
+### 3. Wire the resulting workflow ID into the app
 
-### Monitor Execution
+Once created, set `KEEPERHUB_MARKVERIFIED_WORKFLOW_ID` in `.env.local` to
+the workflow ID the agent gives you, then this repo's own
+`services/analysis/keeperhub.js` calls it via the plain REST API
+(`POST /api/workflows/{id}/execute` → `GET .../wait`) as part of the
+post-mint flow — see the "KeeperHub post-mint automation" section of the
+root README.
 
-```
-"Get status of execution ex_123"
-```
+## What the agent can do once connected
 
-Agent returns status, transaction hash (if complete), and gas consumed.
+The real tool surface (call `tools_documentation` for the always-current
+list) includes, among 30+ tools:
 
-### View History
+- `create_workflow` / `update_workflow` / `delete_workflow` / `validate_workflow`
+- `execute_workflow` / `get_execution`
+- `execute_contract_call` (supports `simulate: true` to preflight before a
+  real broadcast — the recommended safe-write sequence: simulate, then
+  repeat with a unique `idempotency_key`, then poll
+  `get_direct_execution_status`)
+- `ai_generate_workflow` — describe a workflow in plain language and get a
+  complete node/edge graph back
+- `search_templates` / `deploy_template`
 
-```
-"List all successful executions"
-```
+## Security notes
 
-Agent returns audit trail of past workflow runs.
-
-## MCP Tools
-
-| Tool | Purpose |
-|------|----------|
-| `authenticate` | Link KeeperHub account with API key |
-| `list_workflows` | View available workflows |
-| `create_workflow` | Deploy new automation workflows |
-| `execute_workflow` | Run workflow (gas optimized, retried, MEV protected) |
-| `get_execution_status` | Check execution progress and results |
-| `list_executions` | Audit trail of past workflow runs |
-
-## Architecture
-
-```
-Your Copilot Agent
-        ↓
-MCP Server (services/mcp/keeperhub-server.js)
-        ↓
-KeeperHub REST API
-        ↓
-Smart Contract (on-chain)
-```
-
-## Security
-
-- ✅ API key and wallet private key read from environment only
-- ✅ Never logged or echoed in responses
-- ✅ Use GitHub Secrets in CI/CD
-- ✅ Full audit trail optional via `KEEPERHUB_AUDIT_WEBHOOK`
-
-## Troubleshooting
-
-**"KEEPERHUB_API_KEY not configured"**
-→ Set `KEEPERHUB_API_KEY` in `.env.local` or GitHub Copilot secrets
-
-**"KEEPERHUB_WALLET_PRIVATE_KEY not configured"**
-→ Set your agentic wallet's private key (must have ETH for gas)
-
-**"Workflow trigger failed"**
-→ Verify workflow ID with `list_workflows` and check input schema
-
-**Execution times out after 55 seconds**
-→ KeeperHub keeps retrying in background. Use `get_execution_status` to check.
-
-## Example: Post-Mint Automation
-
-```
-Agent: "Deploy a workflow that marks NFT mints as verified"
-→ Agent creates workflow via create_workflow
-
-Agent: "Execute it for tokenId 42"
-→ Agent calls execute_workflow
-→ KeeperHub simulates, optimizes gas, submits tx
-→ Agent returns tx hash
-
-Agent: "Check the status"
-→ Agent polls get_execution_status
-→ Shows: ✓ Success, Gas: 45,000 wei, Tx: 0xabcd...
-```
-
-## See Also
-
-- [KeeperHub Docs](https://docs.keeperhub.com)
-- [Proof of Dev README](../../README.md)
-- [KeeperHub Client Code](../analysis/keeperhub.js)
+- `KEEPERHUB_API_KEY` and any wallet keys are read from your environment
+  only — never commit them. `.env.local` is gitignored; double-check
+  `git status` before committing if you've edited it directly.
+- OAuth tokens (browser flow) are managed automatically by Claude Code —
+  no key material touches this repo at all in that mode.
+- MCP connections are scoped to a single KeeperHub organization per
+  connection. If you work across multiple orgs, add separate named server
+  entries rather than switching the same one back and forth.

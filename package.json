@@ -25,8 +25,6 @@
     "onchain:register-schema": "tsx scripts/registerSchema.ts",
     "seed:wallet": "node scripts/seed-indexed-wallet.js",
     "demo:keeperhub": "node scripts/keeperhub-demo.js",
-    "setup:keeperhub-agent": "node scripts/setup-keeperhub-agent.js",
-    "test:keeperhub-agent": "node scripts/test-keeperhub-agent.js",
     "test:scoring": "node --test tests/scoring-parity.test.js",
     "test:keeperhub": "node --test tests/keeperhub.test.js",
     "test": "npm run test:scoring && npm run test:keeperhub"

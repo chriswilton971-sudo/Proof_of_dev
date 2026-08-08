@@ -145,7 +145,7 @@ async function main() {
   if (walletKey) {
     console.log(`✓ Agentic wallet configured\n`);
   } else {
-    console.log(`⚠️  Agentic wallet not configured (deploy-only mode)\n`);
+    console.log(`⚠️  Agentic wallet not configured (list/deploy mode)\n`);
   }
 
   // Step 5: Verify MCP Server
@@ -179,7 +179,7 @@ async function main() {
   console.log("│ Your Copilot agent can now:                             │");
   console.log("│                                                         │");
   console.log('│ 1. "Authenticate with KeeperHub using my API key"       │');
-  console.log('│ 2. "List available workflows"                           │');
+  console.log('│ 2. "List my available workflows"                        │');
   console.log('│ 3. "Create a workflow that calls markVerified..."       │');
   console.log('│ 4. "Execute workflow wf_abc123 with tokenId=42"         │');
   console.log('│ 5. "Get status of execution ex_123"                     │');
@@ -190,6 +190,9 @@ async function main() {
   console.log(
     `   ${path.join(rootDir, "docs/integrations/keeperhub-copilot-agent.md")}\n`
   );
+
+  console.log("🧪 Test your setup:");
+  console.log(`   npm run test:keeperhub-agent\n`);
 
   console.log("✅ Setup complete! Your agent is ready for workflow automation.\n");
 

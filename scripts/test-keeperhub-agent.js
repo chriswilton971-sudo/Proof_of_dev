@@ -1,3 +1,131 @@
 #!/usr/bin/env node
 
-/**\n * Quick Test: Authenticate with KeeperHub MCP Server\n *\n * This script tests the KeeperHub MCP server connection by simulating\n * an agent authentication flow.\n *\n * Usage:\n *   npm run test:keeperhub-agent\n *   node scripts/test-keeperhub-agent.js <api_key>\n */\n\nimport * as fs from \"fs\";\nimport * as path from \"path\";\nimport { fileURLToPath } from \"url\";\n\nconst __filename = fileURLToPath(import.meta.url);\nconst __dirname = path.dirname(__filename);\nconst rootDir = path.resolve(__dirname, \"..\");\n\n// Get API key from .env.local or command line\nlet apiKey = process.argv[2];\n\nif (!apiKey) {\n  const envLocalPath = path.join(rootDir, \".env.local\");\n  if (fs.existsSync(envLocalPath)) {\n    const envContent = fs.readFileSync(envLocalPath, \"utf8\");\n    const match = envContent.match(/KEEPERHUB_API_KEY=(.+)/);\n    if (match) {\n      apiKey = match[1].trim();\n    }\n  }\n}\n\nif (!apiKey) {\n  console.error(\n    \"Error: KEEPERHUB_API_KEY not found. Set it in .env.local or pass as argument.\\n\" +\n    \"Usage: node scripts/test-keeperhub-agent.js kh_your_key_here\\n\"\n  );\n  process.exit(1);\n}\n\nif (!apiKey.startsWith(\"kh_\")) {\n  console.error(\n    \"Error: Invalid API key format. Must start with 'kh_'.\\n\"\n  );\n  process.exit(1);\n}\n\nconsole.log(\"\\n🧪 Testing KeeperHub MCP Agent Connection...\\n\");\n\nasync function testConnection() {\n  console.log(\"📡 Calling KeeperHub API...\");\n  console.log(`   Endpoint: https://app.keeperhub.com/api/workflows\\n`);\n\n  try {\n    const response = await fetch(\n      \"https://app.keeperhub.com/api/workflows\",\n      {\n        method: \"GET\",\n        headers: {\n          Authorization: `Bearer ${apiKey}`,\n        },\n      }\n    );\n\n    if (!response.ok) {\n      throw new Error(`HTTP ${response.status}: ${response.statusText}`);\n    }\n\n    const data = await response.json();\n\n    console.log(\"✅ Authentication Successful!\\n\");\n    console.log(\"📊 Account Details:\");\n    console.log(\n      `   Organization: ${data.organization?.name || \"Unknown\"}`\n    );\n    console.log(\n      `   Workflows: ${data.data?.length || 0}`\n    );\n    console.log(\n      `   API Base URL: https://app.keeperhub.com\\n`\n    );\n\n    if (data.data && data.data.length > 0) {\n      console.log(\"📋 Available Workflows:\");\n      data.data.slice(0, 5).forEach((w, i) => {\n        console.log(\n          `   ${i + 1}. ${w.name} (ID: ${w.id})`\n        );\n        if (w.network) console.log(`      Network: ${w.network}`);\n        if (w.contractAddress)\n          console.log(`      Contract: ${w.contractAddress}`);\n      });\n      if (data.data.length > 5) {\n        console.log(`   ... and ${data.data.length - 5} more\\n`);\n      } else {\n        console.log();\n      }\n    }\n\n    console.log(\"🎯 Next Steps:\");\n    console.log(\n      \"   1. Ask your agent: \\\"Authenticate me with KeeperHub using my API key\\\"\"\n    );\n    console.log(\n      \"   2. Ask your agent: \\\"List my available workflows\\\"\"\n    );\n    console.log(\n      \"   3. Ask your agent: \\\"Deploy a new workflow that...\\\"\"\n    );\n    console.log(\n      \"   4. Ask your agent: \\\"Execute workflow <id> with...\\\"\"\n    );\n    console.log();\n    console.log(\n      \"📖 Full guide: docs/integrations/keeperhub-copilot-agent.md\\n\"\n    );\n  } catch (error) {\n    console.error(\"❌ Connection Failed:\\n\");\n    console.error(`   ${error.message}\\n`);\n    console.error(\"💡 Troubleshooting:\");\n    console.error(\"   • Verify API key format (must start with 'kh_')\");\n    console.error(\"   • Check https://app.keeperhub.com/settings/api-keys\");\n    console.error(\"   • Ensure organization is active and configured\\n\");\n    process.exit(1);\n  }\n}\n\ntestConnection().catch(console.error);\n
+/**
+ * Quick Test: Authenticate with KeeperHub MCP Server
+ *
+ * This script tests the KeeperHub MCP server connection by simulating
+ * an agent authentication flow.
+ *
+ * Usage:
+ *   npm run test:keeperhub-agent
+ *   node scripts/test-keeperhub-agent.js <api_key>
+ */
+
+import * as fs from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const rootDir = path.resolve(__dirname, "..");
+
+// Get API key from .env.local or command line
+let apiKey = process.argv[2];
+
+if (!apiKey) {
+  const envLocalPath = path.join(rootDir, ".env.local");
+  if (fs.existsSync(envLocalPath)) {
+    const envContent = fs.readFileSync(envLocalPath, "utf8");
+    const match = envContent.match(/KEEPERHUB_API_KEY=(.+)/);
+    if (match) {
+      apiKey = match[1].trim();
+    }
+  }
+}
+
+if (!apiKey) {
+  console.error(
+    "Error: KEEPERHUB_API_KEY not found. Set it in .env.local or pass as argument.\n" +
+    "Usage: node scripts/test-keeperhub-agent.js kh_your_key_here\n"
+  );
+  process.exit(1);
+}
+
+if (!apiKey.startsWith("kh_")) {
+  console.error(
+    "Error: Invalid API key format. Must start with 'kh_'.\n"
+  );
+  process.exit(1);
+}
+
+console.log("\n🧪 Testing KeeperHub MCP Agent Connection...\n");
+
+async function testConnection() {
+  console.log("📡 Calling KeeperHub API...");
+  console.log(`   Endpoint: https://app.keeperhub.com/api/workflows\n`);
+
+  try {
+    const response = await fetch(
+      "https://app.keeperhub.com/api/workflows",
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    console.log("✅ Authentication Successful!\n");
+    console.log("📊 Account Details:");
+    console.log(
+      `   Organization: ${data.organization?.name || "Unknown"}`
+    );
+    console.log(
+      `   Workflows: ${data.data?.length || 0}`
+    );
+    console.log(
+      `   API Base URL: https://app.keeperhub.com\n`
+    );
+
+    if (data.data && data.data.length > 0) {
+      console.log("📋 Available Workflows:");
+      data.data.slice(0, 5).forEach((w, i) => {
+        console.log(
+          `   ${i + 1}. ${w.name} (ID: ${w.id})`
+        );
+        if (w.network) console.log(`      Network: ${w.network}`);
+        if (w.contractAddress)
+          console.log(`      Contract: ${w.contractAddress}`);
+      });
+      if (data.data.length > 5) {
+        console.log(`   ... and ${data.data.length - 5} more\n`);
+      } else {
+        console.log();
+      }
+    }
+
+    console.log("🎯 Next Steps:");
+    console.log(
+      '   1. Ask your agent: "Authenticate me with KeeperHub using my API key"'
+    );
+    console.log(
+      '   2. Ask your agent: "List my available workflows"'
+    );
+    console.log(
+      '   3. Ask your agent: "Deploy a new workflow that..."'
+    );
+    console.log(
+      '   4. Ask your agent: "Execute workflow <id> with..."'
+    );
+    console.log();
+    console.log(
+      "📖 Full guide: docs/integrations/keeperhub-copilot-agent.md\n"
+    );
+  } catch (error) {
+    console.error("❌ Connection Failed:\n");
+    console.error(`   ${error.message}\n`);
+    console.error("💡 Troubleshooting:");
+    console.error("   • Verify API key format (must start with 'kh_')");
+    console.error("   • Check https://app.keeperhub.com/settings/api-keys");
+    console.error("   • Ensure organization is active and configured\n");
+    process.exit(1);
+  }
+}
+
+testConnection().catch(console.error);

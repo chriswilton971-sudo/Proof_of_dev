@@ -2,7 +2,9 @@
 
 *Written while building [Proof of Dev](https://github.com/chriswilton971-sudo/Proof_of_dev) — a soulbound reputation NFT that uses KeeperHub to execute its post-mint verification step onchain.*
 
-This isn't a complaint post — the platform works, and once wired up it's genuinely reliable (audit trail, retries, and payment routing all behaved exactly as documented). This is a record of the specific places a first-time integrator loses time, in the hope it shortens someone else's path from zero to their first transaction.
+**Team:** [The Abuja Algorithmic Defenders (TAAD)](https://x.com/taadengineers?s=11) — [armstrongmonday](https://github.com/armstrongmonday), [chriswilton971-sudo](https://github.com/chriswilton971-sudo), [danielnweze54-cyber](https://github.com/danielnweze54-cyber) · [DoraHacks](https://dorahacks.io/navi?to=%2Fhome)
+
+This isn't a complaint post — the platform works, and once wired up correctly it's genuinely reliable (audit trail, retries, and execution guarantees all behaved exactly as documented). This is a record of the specific places a first-time integrator loses time, in the hope it shortens someone else's path from zero to their first transaction.
 
 ---
 
@@ -12,7 +14,7 @@ This isn't a complaint post — the platform works, and once wired up it's genui
 
 It's the wrong guide if you're an *agent* (or a backend service acting on an agent's behalf) that needs to **trigger an existing workflow programmatically** and **read back the result**. That path — `KEEPERHUB_API_KEY`, `Authorization: Bearer`, `POST /v1/workflows/{id}/execute`, polling execution status — isn't mentioned anywhere in the quickstart. A builder coming from an "AI agent hackathon" framing, expecting to call KeeperHub from code, has to reverse-engineer the API shape from the CLI reference (`kh execute contract-call`) and the API index page, with no single doc connecting "I have an API key" to "I got a transaction hash back."
 
-**What would have saved time:** a short "Programmatic / Agent Quickstart" alongside the visual one — same five-minute promise, but ending in a `curl` or SDK call that returns a `txHash`, not a screenshot of the canvas. I've submitted exactly this as a docs PR to KeeperHub's repo, and packaged the underlying pattern as a standalone runnable template: [keeperhub-agent-quickstart](https://github.com/chriswilton971-sudo/keeperhub-agent-quickstart).
+**What would have saved time:** a short "Programmatic / Agent Quickstart" alongside the visual one — same five-minute promise, but ending in a `curl` or SDK call that returns a `txHash`, not a screenshot of the canvas. (I've drafted exactly this as a PR — see the accompanying submission.)
 
 ## 2. Workflow execution vs. Direct Execution — no clear "which one do I want" signpost
 
@@ -30,7 +32,20 @@ The hackathon materials mention KeeperHub offers gas sponsorship — accurate, b
 
 This one isn't KeeperHub's fault directly, but it's a pattern worth naming: our own integration code originally treated an empty string or a `your_key_here` placeholder as "unconfigured," but didn't catch the more common placeholder pattern for private keys: `0x0000...0000`. A wallet key sitting at all-zeros looked "present" to a naive `if (key)` check, and the failure only surfaced later as a cryptic signing error instead of a clear "you haven't set this yet." Any SDK/CLI (`kh doctor` already exists and is the right instinct) that explicitly validates "is this a real key vs. a placeholder pattern" before letting a user proceed saves a very confusing debugging session. If `kh doctor` doesn't already check for the all-zeros pattern specifically, it's worth adding.
 
-## 5. What worked well (so this doesn't read as one-sided)
+## 5. A wrong endpoint shape doesn't fail loudly — it just 404s quietly downstream
+
+This is the one that cost the most real time, and it's on us as much as the docs: our own integration called `POST /v1/workflows/{id}/execute` for weeks. That path doesn't exist. The real one is `POST /api/workflows/{id}/execute`, and it doesn't even return a transaction hash — `execute` alone gives back `{ executionId, status: "running" }`; the hash only shows up once you call `GET /api/workflows/executions/{id}/wait` (or poll `/status`) and the run reaches a terminal state.
+
+We'd also added a `payment: { mode, preference }` field to the request body, assuming x402/MPP routing applied to triggering our own workflow. It doesn't — that applies to workflows *you publish* for other agents to call, a different use case entirely. The server didn't reject the extra field; it just silently ignored it, which meant the wrong assumption sat unnoticed in working-looking code for a while.
+
+None of this surfaced as a clear error. It surfaced as "the demo script hangs" and "nothing shows up in KeeperHub's dashboard," which is a much harder thing to debug than a clean 404 would have been.
+
+**The fix, applied for the next builder, not just described:**
+- Corrected our own integration (`services/analysis/keeperhub.js` in this repo) to hit the real path and properly wait for a terminal state before reading `transactionHashes`
+- Opened [a docs PR](https://github.com/KeeperHub/keeperhub/pull/1974) adding an Agent Quick Start page with the verified paths, the trigger→wait→result flow, and an explicit "execute doesn't return a tx hash — wait does" callout, so the next agent builder doesn't lose the same hours
+- Updated the accompanying [starter template](https://github.com/chriswilton971-sudo/keeperhub-agent-quickstart) to demonstrate the correct flow end-to-end, verified by actually running it, not just reading the code
+
+## 6. What worked well (so this doesn't read as one-sided)
 
 - The audit-trail model (trigger → simulation → submitted tx → gas used → outcome) is exactly the right shape and made debugging our own integration straightforward once wired up.
 - `kh execute status` / execution polling behaved predictably and matched the docs.

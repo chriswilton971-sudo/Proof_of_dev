@@ -275,6 +275,23 @@ proof-of-dev/
 
 ---
 
+## Team
+
+Built by [The Abuja Algorithmic Defenders (TAAD)](https://x.com/taadengineers?s=11) for the [KeeperHub Agents Onchain Hackathon](https://dorahacks.io/hackathon/agents-onchain/detail):
+
+- [armstrongmonday](https://github.com/armstrongmonday)
+- [chriswilton971-sudo](https://github.com/chriswilton971-sudo)
+- [danielnweze54-cyber](https://github.com/danielnweze54-cyber)
+
+Team page: [DoraHacks](https://dorahacks.io/navi?to=%2Fhome)
+
+Companion bounty submissions for KeeperHub's Best Onboarding UX Improvement:
+- [Onboarding teardown](docs/keeperhub-onboarding-teardown.md) — where we got stuck integrating KeeperHub, and how we fixed it
+- [keeperhub-agent-quickstart](https://github.com/chriswilton971-sudo/keeperhub-agent-quickstart) — standalone starter template for the trigger → wait → confirm flow
+- [KeeperHub/keeperhub#1974](https://github.com/KeeperHub/keeperhub/pull/1974) — docs PR adding an Agent Quick Start page
+
+---
+
 ## Contributing
 
 Submit a pull request against `main`. Keep changes focused. In the PR description, explain what you changed, why, and how you verified it on the dashboard.

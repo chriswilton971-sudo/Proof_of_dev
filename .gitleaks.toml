@@ -1,0 +1,16 @@
+# gitleaks config — see .github/workflows/ci.yml (secret-scan job).
+#
+# .env.example intentionally documents which env vars exist and their
+# expected shape. Real secrets never belong here (enforced by .gitignore
+# on .env / .env.local) — only clearly-labeled placeholders. Allowlisting
+# the whole file is safer than trying to out-guess gitleaks' regexes with
+# ever-more-convoluted placeholder formatting.
+title = "proof-of-dev gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+paths = [
+  '''\.env\.example$''',
+]

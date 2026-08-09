@@ -23,6 +23,7 @@
     "onchain:compile": "node scripts/compile-contract.js",
     "onchain:deploy": "tsx scripts/deploy.ts",
     "onchain:register-schema": "tsx scripts/registerSchema.ts",
+    "onchain:transfer-ownership": "tsx scripts/transferOwnership.ts",
     "seed:wallet": "node scripts/seed-indexed-wallet.js",
     "demo:keeperhub": "node scripts/keeperhub-demo.js",
     "test:scoring": "node --test tests/scoring-parity.test.js",

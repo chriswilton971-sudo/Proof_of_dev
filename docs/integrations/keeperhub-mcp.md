@@ -131,15 +131,31 @@ Two ways to show a real KeeperHub-executed transaction:
 - Direct Execution sequence (simulate -> `Idempotency-Key` execute -> poll
   `/api/execute/{id}/status`, `X-Poll-Interval-Hint` response header) --
   `docs.keeperhub.com/api/direct-execution`.
-- `network`/`address`/`abiFunction` field naming for contract calls --
-  `docs.keeperhub.com/ai-tools/mcp-server` (web3/write-contract action
-  config).
+- `network`/`address`/`abiFunction`/`args` field naming for contract calls
+  -- `docs.keeperhub.com/ai-tools/mcp-server` states directly: "For
+  web3/read-contract and web3/write-contract, the abiFunction field is
+  the function as it appears in the contract's ABI." Confirms
+  `abiFunction` specifically, not just inferred from the action config
+  shape generally.
 - Non-custodial Turnkey wallet model -- `docs.keeperhub.com/` (Overview).
 
-**Not independently verified -- re-check before a real broadcast:** the
-exact JSON body shape of `POST /api/execute/contract-call` itself. It's
-isolated in `buildExecutionRequestBody()` in `keeperhub.js` for exactly
-this reason -- one function to adjust if the live schema differs.
+**Resolved:** `services/analysis/keeperhub.js`, `scripts/transfer-ownership-to-keeperhub.mjs`,
+and `scripts/submit-hackathon.mjs` previously each guessed the Direct
+Execution request body shape independently -- two of the three used
+different, incompatible field names (`chainId`/`contractAddress`/
+`functionName`/`functionArgs` vs. `network`/`address`/`abiFunction`/`args`).
+All three now share one function (`buildContractCallRequestBody()` in
+`keeperhub.js`, via `simulateContractCall()`/`executeContractCall()`) --
+if the live schema turns out to differ, there's exactly one place to fix,
+not three to keep in sync.
+
+**Still not independently verified against a live call:** the exact JSON
+body shape of `POST /api/execute/contract-call` itself, and the exact
+shape of a simulation response (`willRevert`/`revertReason` vs.
+`wouldRevert` vs. something else entirely). Run
+`node scripts/transfer-ownership-to-keeperhub.mjs <address>` (simulate-only,
+never broadcasts) as the first real test against the live API before
+trusting any of this for a demo.
 
 ## Not yet done (follow-up)
 

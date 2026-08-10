@@ -64,8 +64,6 @@ const {
   DEPLOYER_PRIVATE_KEY,
   NEXT_PUBLIC_ALCHEMY_API_KEY,
   NEXT_PUBLIC_CONTRACT_ADDRESS,
-  KEEPERHUB_API_KEY,
-  KEEPERHUB_BASE_URL = "https://app.keeperhub.com",
 } = process.env;
 
 const OWNABLE_ABI = [
@@ -95,40 +93,33 @@ if (currentOwner.toLowerCase() === keeperHubWallet.toLowerCase()) {
 }
 
 step(3, "acceptOwnership() via KeeperHub");
-async function keeperhubCall(path, body, headers = {}) {
-  const res = await fetch(`${KEEPERHUB_BASE_URL}${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${KEEPERHUB_API_KEY}`, "Content-Type": "application/json", ...headers },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`${res.status}: ${JSON.stringify(json)}`);
-  return json;
-}
+const { simulateAcceptOwnership, executeAcceptOwnership } = await import("../services/analysis/keeperhub.js");
 
-const acceptBody = {
-  chainId: 11155111,
+const sim = await simulateAcceptOwnership({
+  network: "sepolia",
   contractAddress: NEXT_PUBLIC_CONTRACT_ADDRESS,
-  functionName: "acceptOwnership",
-  functionArgs: JSON.stringify([]),
-};
-
-const sim = await keeperhubCall("/api/execute/contract-call", { ...acceptBody, simulate: true }).catch((e) => {
+}).catch((e) => {
   console.error("Simulate failed:", e.message);
-  console.error("If this is a field-name error, see the open question in docs/integrations/keeperhub-mcp.md");
+  if (e.body) console.error("response body:", JSON.stringify(e.body));
+  console.error(
+    "If this is a field-name error, fix buildContractCallRequestBody() in " +
+      "services/analysis/keeperhub.js -- every KeeperHub call in this repo shares it now."
+  );
   return null;
 });
 
 if (sim) {
-  if (sim.wouldRevert) {
-    console.log(`Simulation says acceptOwnership() would revert: ${sim.revertReason ?? "unknown"}`);
+  if (sim.willRevert === true || sim.success === false) {
+    console.log(`Simulation says acceptOwnership() would revert: ${sim.revertReason ?? sim.error ?? "unknown"}`);
     console.log("(Fine if KeeperHub already auto-accepted, or already owns the contract — check step 2's owner value above.)");
   } else if (!confirmAcceptOwnership) {
     console.log("Simulation OK. NOT broadcasting — pass --confirm-accept-ownership to actually accept ownership for real.");
   } else {
     console.log("Broadcasting acceptOwnership() for real ...");
-    const { randomUUID } = await import("crypto");
-    const broadcast = await keeperhubCall("/api/execute/contract-call", acceptBody, { "Idempotency-Key": randomUUID() });
+    const broadcast = await executeAcceptOwnership({
+      network: "sepolia",
+      contractAddress: NEXT_PUBLIC_CONTRACT_ADDRESS,
+    });
     console.log("Broadcast result:", JSON.stringify(broadcast, null, 2));
   }
 }

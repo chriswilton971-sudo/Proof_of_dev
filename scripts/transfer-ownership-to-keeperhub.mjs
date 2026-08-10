@@ -33,6 +33,7 @@
 
 import "./load-env.js";
 import { ethers } from "ethers";
+import { simulateAcceptOwnership } from "../services/analysis/keeperhub.js";
 
 const OWNABLE_ABI = [
   "function owner() view returns (address)",
@@ -53,7 +54,6 @@ const {
   NEXT_PUBLIC_ALCHEMY_API_KEY,
   NEXT_PUBLIC_CONTRACT_ADDRESS,
   KEEPERHUB_API_KEY,
-  KEEPERHUB_BASE_URL = "https://app.keeperhub.com",
 } = process.env;
 
 for (const [name, val] of Object.entries({
@@ -96,40 +96,37 @@ async function main() {
     console.log("      Confirmed. pendingOwner is now set — KeeperHub's wallet must accept it.");
   }
 
-  console.log(`\n[2/2] Triggering acceptOwnership() via KeeperHub (${keeperHubWallet}) ...`);
-  const res = await fetch(`${KEEPERHUB_BASE_URL}/api/execute/contract-call`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${KEEPERHUB_API_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      chainId: 11155111,
-      contractAddress: NEXT_PUBLIC_CONTRACT_ADDRESS,
-      functionName: "acceptOwnership",
-      functionArgs: JSON.stringify([]),
-      simulate: true,
-    }),
-  });
-  const body = await res.json();
+  console.log(`\n[2/2] Simulating acceptOwnership() via KeeperHub (${keeperHubWallet}) ...`);
 
-  if (!res.ok) {
-    console.error("      KeeperHub simulate failed:", body);
+  let simulation;
+  try {
+    simulation = await simulateAcceptOwnership({
+      network: "sepolia",
+      contractAddress: NEXT_PUBLIC_CONTRACT_ADDRESS,
+    });
+  } catch (err) {
+    console.error("      KeeperHub simulate failed:", err.message);
+    if (err.body) console.error("      response body:", JSON.stringify(err.body));
     console.error(
-      "      If this is a field-name error, main's keeperhub.js uses network/address/" +
-        "abiFunction/args instead — see the open question flagged in docs/integrations/keeperhub-mcp.md."
+      "      If this is a field-name error, the request shape lives in ONE place now — " +
+        "buildContractCallRequestBody() in services/analysis/keeperhub.js. Fix it there; " +
+        "this script and executeMarkVerified()/executeAcceptOwnership() all share it."
     );
     process.exit(1);
   }
-  if (body.wouldRevert) {
-    console.error("      Simulation says acceptOwnership() would revert:", body.revertReason ?? body);
+
+  if (simulation?.willRevert === true || simulation?.success === false) {
+    console.error(
+      "      Simulation says acceptOwnership() would revert:",
+      simulation?.revertReason ?? simulation?.error ?? simulation
+    );
     process.exit(1);
   }
 
-  console.log("      Simulation OK. Re-run the same request without simulate:true (or via");
-  console.log("      services/analysis/keeperhub.js) to actually broadcast step 2, since that");
-  console.log("      requires KeeperHub's wallet to sign — this script deliberately stops at a");
-  console.log("      safe dry run rather than auto-broadcasting a real ownership acceptance.");
+  console.log("      Simulation OK. To actually broadcast step 2 (irreversible), use");
+  console.log("      scripts/submit-hackathon.mjs with --confirm-accept-ownership, which calls");
+  console.log("      executeAcceptOwnership() from services/analysis/keeperhub.js — this script");
+  console.log("      deliberately stops at a safe dry run rather than auto-broadcasting.");
 }
 
 main().catch((err) => {

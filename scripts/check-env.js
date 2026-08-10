@@ -50,11 +50,16 @@ const recommended = [
 // for the one thing that actually matters for hackathon submission: a real
 // transaction executed through KeeperHub. Checked separately and loudly so
 // "check-env OK" never gives false confidence about this specific path.
+//
+// Matches the real Direct Execution flow (services/analysis/keeperhub.js) --
+// there is no separate agentic-wallet private key or workflow ID to set.
+// KeeperHub signs with its own provisioned wallet; markVerified() being
+// onlyOwner means that wallet must actually own the deployed contract
+// (scripts/transfer-ownership-to-keeperhub.mjs), which this check can't
+// verify from env vars alone -- it's an on-chain fact, checked separately.
 const keeperhub = [
-  { key: "KEEPERHUB_API_KEY", hint: "app.keeperhub.com → Settings → API Keys" },
-  { key: "KEEPERHUB_WALLET_PRIVATE_KEY", hint: "agentic signing wallet, must be/be delegated by contract owner" },
-  { key: "KEEPERHUB_MARKVERIFIED_WORKFLOW_ID", hint: "workflow ID from the KeeperHub dashboard that calls markVerified(tokenId)" },
-  { key: "KEEPERHUB_WEBHOOK_SECRET", hint: "any random value — gates /webhooks/keeperhub/post-mint" },
+  { key: "KEEPERHUB_API_KEY", hint: "app.keeperhub.com → Settings → API Keys → Organisation" },
+  { key: "KEEPERHUB_WEBHOOK_SECRET", hint: "any random value — gates POST /keeperhub/verify" },
 ];
 
 function isMissingKey(key) {
@@ -100,7 +105,11 @@ if (keeperhubMissing.length > 0) {
   console.warn("            recording your demo or fetching a submission tx link.");
   console.warn("");
 } else {
-  console.info("[check-env] ✓ KeeperHub fully configured — ready to run npm run demo:keeperhub");
+  console.info("[check-env] ✓ KeeperHub env vars configured — ready for scripts/keeperhub-demo.js");
+  console.info("[check-env]   Env vars alone don't guarantee a real broadcast succeeds:");
+  console.info("[check-env]   markVerified() is onlyOwner, so KeeperHub's wallet must actually");
+  console.info("[check-env]   own the deployed contract — run");
+  console.info("[check-env]   scripts/transfer-ownership-to-keeperhub.mjs first if unsure.");
 }
 
 if (failed) {

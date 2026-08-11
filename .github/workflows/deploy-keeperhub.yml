@@ -1,0 +1,49 @@
+name: Register KeeperHub MCP with Copilot agent
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Register KeeperHub MCP with Copilot agent
+        env:
+          COPILOT_AGENT_URL: ${{ secrets.COPILOT_AGENT_URL }}
+          COPILOT_AGENT_TOKEN: ${{ secrets.COPILOT_AGENT_TOKEN }}
+          KEEPERHUB_MCP_URL: ${{ secrets.KEEPERHUB_MCP_URL }}
+          KEEPERHUB_API_KEY: ${{ secrets.KEEPERHUB_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${COPILOT_AGENT_URL:-}" ] || [ -z "${COPILOT_AGENT_TOKEN:-}" ] || [ -z "${KEEPERHUB_MCP_URL:-}" ] || [ -z "${KEEPERHUB_API_KEY:-}" ]; then
+            echo "Missing required secrets: COPILOT_AGENT_URL, COPILOT_AGENT_TOKEN, KEEPERHUB_MCP_URL, KEEPERHUB_API_KEY"
+            exit 1
+          fi
+
+          echo "Calling Copilot agent to register KeeperHub MCP server..."
+
+          # Template request: adjust path if your Copilot agent uses a different endpoint.
+          RESPONSE=$(curl -sS -w "\n%{http_code}" -X POST "${COPILOT_AGENT_URL%/}/api/v1/mcp/register" \
+            -H "Authorization: Bearer ${COPILOT_AGENT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"mcp_url\": \"${KEEPERHUB_MCP_URL}\", \"api_key\": \"${KEEPERHUB_API_KEY}\"}")
+
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          STATUS=$(echo "$RESPONSE" | tail -n1)
+
+          echo "HTTP status: $STATUS"
+          echo "Response body:"
+          echo "$BODY"
+
+          if [ "${STATUS:0:1}" != "2" ]; then
+            echo "Registration failed"
+            exit 1
+          fi
+
+          echo "Registration succeeded"

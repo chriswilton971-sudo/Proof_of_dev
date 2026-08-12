@@ -1,0 +1,36 @@
+name: Diagnose KeeperHub Connectivity
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    name: Diagnose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm install
+      - name: Diagnose
+        working-directory: services/analysis
+        env:
+          KEEPERHUB_API_KEY: ${{ secrets.KEEPERHUB_API_KEY }}
+          KEEPERHUB_BASE_URL: ${{ secrets.KEEPERHUB_BASE_URL }}
+        run: |
+          node --input-type=module -e '
+            const { isKeeperhubConfigured, checkKeeperhubConnection, KEEPERHUB_BASE_URL } = await import("./keeperhub.js");
+            console.log("configured:", isKeeperhubConfigured());
+            console.log("base url:", KEEPERHUB_BASE_URL);
+            console.log("key length:", (process.env.KEEPERHUB_API_KEY || "").length);
+            console.log("key prefix:", (process.env.KEEPERHUB_API_KEY || "").slice(0, 3));
+            try {
+              const r = await checkKeeperhubConnection();
+              console.log("SUCCESS:", JSON.stringify(r));
+            } catch (err) {
+              const msg = (err.message || String(err)).replace(/\n/g, " ");
+              console.log("::error title=KeeperHub error::" + msg);
+            }
+          '

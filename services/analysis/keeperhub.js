@@ -37,7 +37,7 @@ import { randomUUID } from "crypto";
 import { sleep } from "./chain-data/http.js";
 import { chainIdFromNetwork } from "./config.js";
 
-export const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com";
+export const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL || "https://app.keeperhub.com";
 export const KEEPERHUB_API_KEY  = process.env.KEEPERHUB_API_KEY ?? "";
 
 // Shared secret the caller of POST /keeperhub/verify must send back as

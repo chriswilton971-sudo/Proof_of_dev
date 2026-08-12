@@ -130,7 +130,7 @@ async function keeperhubRequest(path, options = {}) {
  * check on its own.)
  */
 export async function checkKeeperhubConnection() {
-  const { body } = await keeperhubRequest("/api/api-keys", { method: "GET" });
+  const { body } = await keeperhubRequest("/api/keys", { method: "GET" });
   return body;
 }
 

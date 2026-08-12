@@ -1,6 +1,7 @@
 /*
   submit hackathon.njs
   Updated: add submission information for hackathon token id 1
+  NOTE: Confirmed submitter and tokenId 1 (verified per user request).
 */
 
 const submission = {

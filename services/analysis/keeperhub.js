@@ -37,7 +37,7 @@ import { randomUUID } from "crypto";
 import { sleep } from "./chain-data/http.js";
 import { chainIdFromNetwork } from "./config.js";
 
-export const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com";
+export const KEEPERHUB_BASE_URL = process.env.KEEPERHUB_BASE_URL || "https://app.keeperhub.com";
 export const KEEPERHUB_API_KEY  = process.env.KEEPERHUB_API_KEY ?? "";
 
 // Shared secret the caller of POST /keeperhub/verify must send back as
@@ -69,12 +69,21 @@ async function logAuditEvent(event) {
   }
 }
 
-// ProofOfDev.markVerified(uint256) — the one write call this integration
-// currently makes. Kept as a minimal, single-function ABI fragment rather
-// than importing the full contract ABI, since that's all KeeperHub needs
-// to encode the call.
+// ProofOfDev.markVerified(uint256) — the primary write call this
+// integration makes. Kept as a minimal, single-function ABI fragment
+// rather than importing the full contract ABI, since that's all
+// KeeperHub needs to encode the call.
 const MARK_VERIFIED_ABI = ["function markVerified(uint256 tokenId)"];
 const markVerifiedIface = new Interface(MARK_VERIFIED_ABI);
+
+// Ownable2Step.acceptOwnership() — the second step of the ownership
+// handoff to KeeperHub's wallet (see scripts/transfer-ownership-to-keeperhub.mjs).
+// Reuses the same generic contract-call machinery below rather than a
+// second, independently-guessed request shape — that duplication is
+// exactly what caused two scripts in this repo to disagree on field names
+// until this was fixed.
+const ACCEPT_OWNERSHIP_ABI = ["function acceptOwnership()"];
+const acceptOwnershipIface = new Interface(ACCEPT_OWNERSHIP_ABI);
 
 const DEFAULT_POLL_INTERVAL_MS = 3000;
 const DEFAULT_POLL_TIMEOUT_MS  = 2 * 60 * 1000; // 2 minutes
@@ -142,41 +151,121 @@ export function buildMarkVerifiedCalldata(tokenId) {
   return markVerifiedIface.encodeFunctionData("markVerified", [BigInt(tokenId)]);
 }
 
-function buildExecutionRequestBody({ network, contractAddress, tokenId, simulate }) {
+/**
+ * Builds the request body for POST /api/execute/contract-call. This is the
+ * ONE place in the repo that constructs this shape — scripts/transfer-
+ * ownership-to-keeperhub.mjs previously duplicated this with different,
+ * unverified field names (chainId/contractAddress/functionName/functionArgs)
+ * and now imports simulateContractCall/executeContractCall from here
+ * instead. If the live schema turns out to differ, there's exactly one
+ * function to fix, not two to keep in sync.
+ *
+ * Field names (`network`, `address`, `abiFunction`, `args`) match what
+ * docs.keeperhub.com/ai-tools/mcp-server documents for the equivalent
+ * web3/write-contract action config ("the abiFunction field is the
+ * function as it appears in the contract's ABI") — the same underlying
+ * wallet/execution layer, so this is a well-founded inference, not a
+ * blind guess, but the exact Direct Execution REST body has not been
+ * independently confirmed against a live call. Test with simulate:true
+ * before trusting this for a real broadcast.
+ */
+function buildContractCallRequestBody({ network, contractAddress, abiFunctionSignature, args, calldata, simulate }) {
   const chainId = chainIdFromNetwork(network);
   return {
     network: String(chainId),
     address: contractAddress,
-    abiFunction: "function markVerified(uint256 tokenId)",
-    args: [String(tokenId)],
-    data: buildMarkVerifiedCalldata(tokenId),
+    abiFunction: abiFunctionSignature,
+    args: args.map(String),
+    data: calldata,
     simulate: Boolean(simulate),
   };
 }
 
-/** Dry-run only — never broadcasts. Surfaces revert reasons before a real write. */
-export async function simulateMarkVerified({ network, contractAddress, tokenId }) {
+/**
+ * Generic simulate-only call against POST /api/execute/contract-call.
+ * Never broadcasts. Surfaces revert reasons before a real write.
+ */
+export async function simulateContractCall({ network, contractAddress, abiFunctionSignature, args, calldata }) {
   const { body } = await keeperhubRequest("/api/execute/contract-call", {
     method: "POST",
-    body: JSON.stringify(buildExecutionRequestBody({ network, contractAddress, tokenId, simulate: true })),
+    body: JSON.stringify(buildContractCallRequestBody({
+      network, contractAddress, abiFunctionSignature, args, calldata, simulate: true,
+    })),
   });
   return body;
 }
 
 /**
- * Broadcasts the real transaction. `idempotencyKey` should be stable for a
- * given (tokenId, contractAddress, network) so a client retry can never
- * cause a double-submit — callers that don't pass one get a fresh random
- * key, which is safe but does NOT dedupe retries; verifyMintOnChain() below
- * always passes a deterministic one.
+ * Generic real-broadcast call against POST /api/execute/contract-call.
+ * `idempotencyKey` should be stable per (contract, network, call) so a
+ * client retry can never cause a double-submit.
  */
-export async function executeMarkVerified({ network, contractAddress, tokenId, idempotencyKey }) {
+export async function executeContractCall({ network, contractAddress, abiFunctionSignature, args, calldata, idempotencyKey }) {
   const { body } = await keeperhubRequest("/api/execute/contract-call", {
     method: "POST",
     headers: { "Idempotency-Key": idempotencyKey ?? randomUUID() },
-    body: JSON.stringify(buildExecutionRequestBody({ network, contractAddress, tokenId, simulate: false })),
+    body: JSON.stringify(buildContractCallRequestBody({
+      network, contractAddress, abiFunctionSignature, args, calldata, simulate: false,
+    })),
   });
   return body; // expected to include an execution id to poll
+}
+
+/** Dry-run only — never broadcasts. Surfaces revert reasons before a real write. */
+export async function simulateMarkVerified({ network, contractAddress, tokenId }) {
+  return simulateContractCall({
+    network,
+    contractAddress,
+    abiFunctionSignature: "function markVerified(uint256 tokenId)",
+    args: [tokenId],
+    calldata: buildMarkVerifiedCalldata(tokenId),
+  });
+}
+
+/**
+ * Broadcasts the real transaction. `idempotencyKey` should be stable for a
+ * given (tokenId, contractAddress, network) so a client retry can never
+ * cause a double-submit; verifyMintOnChain() below always passes a
+ * deterministic one.
+ */
+export async function executeMarkVerified({ network, contractAddress, tokenId, idempotencyKey }) {
+  return executeContractCall({
+    network,
+    contractAddress,
+    abiFunctionSignature: "function markVerified(uint256 tokenId)",
+    args: [tokenId],
+    calldata: buildMarkVerifiedCalldata(tokenId),
+    idempotencyKey,
+  });
+}
+
+/**
+ * Simulate-only check of acceptOwnership() — used by
+ * scripts/transfer-ownership-to-keeperhub.mjs, which deliberately stops
+ * after this and never calls the execute counterpart itself (accepting
+ * ownership is irreversible and gated behind an explicit human
+ * confirmation at a higher level — see scripts/submit-hackathon.mjs).
+ */
+export async function simulateAcceptOwnership({ network, contractAddress }) {
+  return simulateContractCall({
+    network,
+    contractAddress,
+    abiFunctionSignature: "function acceptOwnership()",
+    args: [],
+    calldata: acceptOwnershipIface.encodeFunctionData("acceptOwnership", []),
+  });
+}
+
+/** Real broadcast of acceptOwnership() — irreversible, use deliberately. */
+export async function executeAcceptOwnership({ network, contractAddress, idempotencyKey }) {
+  return executeContractCall({
+    network,
+    contractAddress,
+    abiFunctionSignature: "function acceptOwnership()",
+    args: [],
+    calldata: acceptOwnershipIface.encodeFunctionData("acceptOwnership", []),
+    idempotencyKey,
+  });
 }
 
 /** GET /api/execute/{id}/status — single poll, no waiting. */

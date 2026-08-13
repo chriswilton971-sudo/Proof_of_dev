@@ -195,7 +195,8 @@ jobs:
               await checkKeeperhubConnection();
               console.log("KeeperHub connectivity OK.");
             } catch (err) {
-              console.error("KeeperHub connectivity check failed:", err.message);
+              const msg = (err.message || String(err)).replace(/\n/g, " ");
+              console.log("::error title=KeeperHub smoke test failure::" + msg);
               process.exit(1);
             }
           '

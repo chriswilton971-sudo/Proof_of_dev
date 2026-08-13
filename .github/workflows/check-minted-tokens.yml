@@ -1,0 +1,39 @@
+name: Check Minted Tokens
+
+# Read-only, no private key used, no gas spent, no state change — safe to
+# run without the approval gate the submission workflow uses.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    name: Run scripts/check-minted-tokens.mjs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run check-minted-tokens.mjs
+        env:
+          NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
+          NEXT_PUBLIC_CONTRACT_ADDRESS: ${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
+        run: node scripts/check-minted-tokens.mjs | tee result.txt
+
+      - name: Print result to job summary
+        if: always()
+        run: cat result.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Also surface result as an annotation (readable via Checks API)
+        if: always()
+        run: |
+          ENCODED=$(cat result.txt | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::notice title=Check Minted Tokens result::$ENCODED"

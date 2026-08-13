@@ -39,18 +39,8 @@ transactions.
 
 `markVerified` is `onlyOwner`, so **ownership must be transferred to (or the
 contract deployed with) the wallet address KeeperHub provisions for this
-org** before this will succeed on real Sepolia. Two-step transfer (the
-contract uses an Ownable2Step-style pattern, not a single-call transfer):
-
-```bash
-npm run onchain:transfer-ownership -- 0xKeeperHubWalletAddress
-```
-
-Run with `DEPLOYER_PRIVATE_KEY` set to the *current* owner's key in
-`.env.local` — this only starts the transfer (`transferOwnership()`). It
-stays **pending** until KeeperHub's wallet itself calls `acceptOwnership()`
-back, which only KeeperHub can trigger (dashboard/API/support) — see
-`scripts/transferOwnership.ts`.
+org** before this will succeed on real Sepolia — see
+`scripts/transfer-ownership-to-keeperhub.mjs` below.
 
 ## Getting credentials
 

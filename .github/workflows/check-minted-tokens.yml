@@ -31,3 +31,9 @@ jobs:
       - name: Print result to job summary
         if: always()
         run: cat result.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Also surface result as an annotation (readable via Checks API)
+        if: always()
+        run: |
+          ENCODED=$(cat result.txt | sed ':a;N;$!ba;s/\n/%0A/g')
+          echo "::notice title=Check Minted Tokens result::$ENCODED"

@@ -1,9 +1,11 @@
 name: Submit to KeeperHub Hackathon
 
-# Manual-only, on purpose — this can spend real (testnet) gas and, on
-# the ownership branch, make an irreversible on-chain ownership change. Never
-# runs automatically on push/PR; only a human clicking "Run workflow" (or
-# the Actions API) triggers it.
+# This workflow now supports both manual runs (workflow_dispatch) and
+# automatic runs on push to main. When triggered by a push it will read
+# tokenId/keeperHubWalletAddress from repository secrets (SUBMIT_TOKEN_ID
+# and SUBMIT_KEEPER_WALLET) and automatically confirm acceptOwnership to
+# produce a real on-chain transaction recorded in SUBMISSION.md.
+
 on:
   workflow_dispatch:
     inputs:
@@ -20,14 +22,16 @@ on:
         required: false
         type: boolean
         default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
 
 jobs:
   submit:
     name: Run scripts/submit-hackathon.mjs
     runs-on: ubuntu-latest
-    # Uses a protected GitHub Environment so secrets are scoped here only,
-    # and (once you configure it — see the workflow README section) you
-    # can require a reviewer to approve before this job actually runs.
     environment: keeperhub-submission
     steps:
       - name: Checkout
@@ -50,14 +54,42 @@ jobs:
           NEXT_PUBLIC_CONTRACT_ADDRESS=${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
           KEEPERHUB_API_KEY=${{ secrets.KEEPERHUB_API_KEY }}
           KEEPERHUB_WEBHOOK_SECRET=${{ secrets.KEEPERHUB_WEBHOOK_SECRET }}
+          KEEPERHUB_BASE_URL=${{ secrets.KEEPERHUB_BASE_URL || 'https://app.keeperhub.com' }}
           EOF
+
+      - name: Determine args (inputs or secrets for automated runs)
+        id: args
+        run: |
+          # Prefer explicit workflow inputs (manual run). For push-triggered
+          # automated runs, fall back to repository secrets SUBMIT_TOKEN_ID
+          # and SUBMIT_KEEPER_WALLET which must be configured beforehand.
+          ARGS=""
+          if [ -n "${{ github.event.inputs.tokenId }}" ]; then
+            ARGS="${{ github.event.inputs.tokenId }} ${{ github.event.inputs.keeperHubWalletAddress }}"
+          else
+            if [ -n "${{ secrets.SUBMIT_TOKEN_ID }}" ] && [ -n "${{ secrets.SUBMIT_KEEPER_WALLET }}" ]; then
+              ARGS="${{ secrets.SUBMIT_TOKEN_ID }} ${{ secrets.SUBMIT_KEEPER_WALLET }}"
+            else
+              echo "No tokenId/keeperHubWalletAddress provided via inputs or secrets."
+              exit 1
+            fi
+          fi
+
+          # If triggered by push (automatic), enable confirm-accept-ownership for full automation
+          if [ "${{ github.event_name }}" = "push" ]; then
+            ARGS="$ARGS --confirm-accept-ownership"
+          else
+            if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
+              ARGS="$ARGS --confirm-accept-ownership"
+            fi
+          fi
+
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
 
       - name: Run submit-hackathon.mjs
         run: |
-          ARGS="${{ github.event.inputs.tokenId }} ${{ github.event.inputs.keeperHubWalletAddress }}"
-          if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
-            ARGS="$ARGS --confirm-accept-ownership"
-          fi
+          ARGS="${{ steps.args.outputs.args }}"
+          echo "Running submit-hackathon with args: $ARGS"
           node scripts/submit-hackathon.mjs $ARGS
 
       - name: Shred .env.local
@@ -71,6 +103,13 @@ jobs:
           name: SUBMISSION
           path: SUBMISSION.md
           if-no-files-found: warn
+
+      - name: Commit SUBMISSION.md back to repository (auto-publish)
+        if: always() && steps.args.outputs.args != ''
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "chore: add SUBMISSION.md with KeeperHub submission details [skip ci]"
+          file_pattern: SUBMISSION.md
 
       - name: Print result to job summary
         if: always()

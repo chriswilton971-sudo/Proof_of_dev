@@ -1,7 +1,7 @@
 name: Submit to KeeperHub Hackathon
 
-# Manual-only, on purpose — this can spend real (testnet) gas and, on the
-# ownership branch, make an irreversible on-chain ownership change. Never
+# Manual-only, on purpose — this can spend real (testnet) gas and, on
+# the ownership branch, make an irreversible on-chain ownership change. Never
 # runs automatically on push/PR; only a human clicking "Run workflow" (or
 # the Actions API) triggers it.
 on:
@@ -36,7 +36,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Install dependencies

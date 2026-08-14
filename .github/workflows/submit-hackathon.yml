@@ -2,10 +2,8 @@ name: Submit to KeeperHub Hackathon
 
 # This workflow supports manual runs (workflow_dispatch) and automated runs on push to main.
 # For automated runs on push, it will prefer repository secrets SUBMIT_TOKEN_ID/SUBMIT_KEEPER_WALLET,
-# or SUBMIT_PARAMS.json. It now conditionally auto-confirms acceptOwnership only
-# when a valid DEPLOYER_PRIVATE_KEY is present in the constructed .env.local file;
-# otherwise it runs a simulation-only (safe) run so the job can succeed and report
-# simulation/gas estimates without requiring the private key.
+# or SUBMIT_PARAMS.json. If SUBMIT_PARAMS.json contains { "simulate": true } the run will be
+# forced simulation-only regardless of secrets.
 
 on:
   workflow_dispatch:
@@ -63,6 +61,7 @@ jobs:
         run: |
           set -euo pipefail
           ARGS=""
+          SIMULATE="false"
 
           # 1) Manual run via workflow_dispatch with explicit inputs
           if [ -n "${{ github.event.inputs.tokenId }}" ] && [ -n "${{ github.event.inputs.keeperHubWalletAddress }}" ]; then
@@ -74,8 +73,9 @@ jobs:
             else
               # 3) Fallback: read SUBMIT_PARAMS.json from repo root if present
               if [ -f SUBMIT_PARAMS.json ]; then
-                echo "Found SUBMIT_PARAMS.json — reading tokenId and keeperWallet"
-                ARGS=$(node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('SUBMIT_PARAMS.json','utf8')); if(!p.tokenId||!p.keeperWallet){console.error('SUBMIT_PARAMS.json missing tokenId or keeperWallet'); process.exit(2);} console.log(p.tokenId + ' ' + p.keeperWallet)")
+                echo "Found SUBMIT_PARAMS.json — reading tokenId, keeperWallet and simulate flag"
+                NODEOUT=$(node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('SUBMIT_PARAMS.json','utf8')); if(!p.tokenId||!p.keeperWallet){console.error('SUBMIT_PARAMS.json missing tokenId or keeperWallet'); process.exit(2);} console.log(p.tokenId + ' ' + p.keeperWallet + (p.simulate? ' SIMULATE':'') )")
+                ARGS="$NODEOUT"
               else
                 echo "No tokenId/keeperHubWallet provided via inputs, secrets, or SUBMIT_PARAMS.json."
                 exit 1
@@ -83,16 +83,24 @@ jobs:
             fi
           fi
 
+          # Detect simulate marker from SUBMIT_PARAMS.json
+          if echo "$ARGS" | grep -q "SIMULATE"; then
+            SIMULATE="true"
+            ARGS=${ARGS// SIMULATE/}
+            echo "Simulation-only mode requested via SUBMIT_PARAMS.json"
+          fi
+
           # Decide whether to auto-confirm acceptOwnership.
-          # If this is an automated push run, only auto-confirm when DEPLOYER_PRIVATE_KEY appears
-          # present (not empty and not a placeholder) in the .env.local we just wrote. Otherwise
-          # run a simulation-only by leaving confirm off.
           if [ "${{ github.event_name }}" = "push" ]; then
-            if grep -Eiq '^DEPLOYER_PRIVATE_KEY=0x[0-9a-fA-F]{64}' .env.local || grep -Eiq '^DEPLOYER_PRIVATE_KEY=([0-9a-zA-Z ]{10,})' .env.local; then
-              echo "DEPLOYER_PRIVATE_KEY appears set — enabling confirm-accept-ownership for automated run"
-              ARGS="$ARGS --confirm-accept-ownership"
+            if [ "$SIMULATE" = "true" ]; then
+              echo "SIMULATION requested — NOT enabling confirm-accept-ownership"
             else
-              echo "DEPLOYER_PRIVATE_KEY missing or placeholder — performing simulation-only (no acceptOwnership)"
+              if grep -Eiq '^DEPLOYER_PRIVATE_KEY=0x[0-9a-fA-F]{64}' .env.local || grep -Eiq '^DEPLOYER_PRIVATE_KEY=([0-9a-zA-Z ]{10,})' .env.local; then
+                echo "DEPLOYER_PRIVATE_KEY appears set — enabling confirm-accept-ownership for automated run"
+                ARGS="$ARGS --confirm-accept-ownership"
+              else
+                echo "DEPLOYER_PRIVATE_KEY missing or placeholder — performing simulation-only (no acceptOwnership)"
+              fi
             fi
           else
             if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
@@ -101,12 +109,19 @@ jobs:
           fi
 
           echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+          echo "simulate=$SIMULATE" >> "$GITHUB_OUTPUT"
 
       - name: Run submit-hackathon.mjs
         run: |
           ARGS="${{ steps.args.outputs.args }}"
+          SIM="${{ steps.args.outputs.simulate }}"
           echo "Running submit-hackathon with args: $ARGS"
-          node scripts/submit-hackathon.mjs $ARGS
+          if [ "$SIM" = "true" ]; then
+            echo "Forcing simulation-only run: passing --dry-run to script"
+            node scripts/submit-hackathon.mjs $ARGS --dry-run
+          else
+            node scripts/submit-hackathon.mjs $ARGS
+          fi
 
       - name: Shred .env.local
         if: always()

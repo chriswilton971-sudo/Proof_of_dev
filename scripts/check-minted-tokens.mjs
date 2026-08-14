@@ -47,7 +47,10 @@ function report(line) {
   console.log(`::error title=Check Minted Tokens::${line.replace(/\n/g, " ")}`);
 }
 
-const [supply, owner] = await Promise.all([contract.totalSupply(), contract.owner()]);
+const [supply, owner] = await Promise.all([contract.totalSupply(), contract.owner()]).catch((err) => {
+  console.log(`::error title=Check Minted Tokens::FATAL: ${(err.message || String(err)).replace(/\n/g, " ")}`);
+  process.exit(1);
+});
 const total = Number(supply);
 
 report(`Contract: ${NEXT_PUBLIC_CONTRACT_ADDRESS}`);

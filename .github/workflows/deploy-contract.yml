@@ -1,0 +1,34 @@
+name: Deploy Contract
+
+# Manual only -- this spends real (testnet) gas and creates a new contract.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    name: Deploy ProofOfDev to Sepolia
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run onchain:compile
+
+      - name: Deploy
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          MINT_SIGNER_PRIVATE_KEY: ${{ secrets.MINT_SIGNER_PRIVATE_KEY }}
+          NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
+          NFT_METADATA_BASE_URI: https://proof-of-dev.taad.app/api/token
+        run: npx tsx scripts/deploy.ts 2>&1 | tee deploy_result.txt
+
+      - name: Surface result as annotations
+        if: always()
+        run: |
+          while IFS= read -r line; do
+            echo "::error title=Deploy Result::$line"
+          done < deploy_result.txt
+          exit 0

@@ -14,10 +14,13 @@
 import { config } from "dotenv";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
+import { writeFileSync } from "fs";
 import { ethers } from "ethers";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: resolve(__dirname, "..", ".env.local") });
+
+const lines = [];
 
 const { NEXT_PUBLIC_ALCHEMY_API_KEY, NEXT_PUBLIC_CONTRACT_ADDRESS } = process.env;
 
@@ -40,10 +43,7 @@ const contract = new ethers.Contract(NEXT_PUBLIC_CONTRACT_ADDRESS, ABI, provider
 
 function report(line) {
   console.log(line);
-  // Also emit as a workflow error-level annotation (proven to actually
-  // surface via the Checks API, unlike ::notice::, and unlike wrapping
-  // this in a separate bash step reading a file) so results are
-  // retrievable programmatically, not just from a signed-in browser.
+  lines.push(line);
   console.log(`::error title=Check Minted Tokens::${line.replace(/\n/g, " ")}`);
 }
 
@@ -56,6 +56,7 @@ report(`Total minted: ${total}`);
 
 if (total === 0) {
   report("Nothing minted yet — you'll need to mint one before running the KeeperHub demo.");
+  writeFileSync(resolve(__dirname, "..", "result.txt"), lines.join("\n") + "\n");
   process.exit(0);
 }
 
@@ -81,3 +82,5 @@ if (unverified.length > 0) {
 } else {
   report("All existing tokens are already verified — mint a new one to demo the flow end-to-end.");
 }
+
+writeFileSync(resolve(__dirname, "..", "result.txt"), lines.join("\n") + "\n");

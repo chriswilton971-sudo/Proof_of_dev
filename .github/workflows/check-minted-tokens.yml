@@ -26,16 +26,8 @@ jobs:
         env:
           NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
           NEXT_PUBLIC_CONTRACT_ADDRESS: ${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
-        run: node scripts/check-minted-tokens.mjs | tee result.txt
+        run: node scripts/check-minted-tokens.mjs
 
       - name: Print result to job summary
         if: always()
         run: cat result.txt >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Also surface result as annotations (readable via Checks API)
-        if: always()
-        run: |
-          while IFS= read -r line; do
-            echo "::error title=Check Minted Tokens::$line"
-          done < result.txt
-          exit 0

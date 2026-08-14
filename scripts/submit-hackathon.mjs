@@ -74,7 +74,31 @@ const OWNABLE_ABI = [
 const provider = new ethers.JsonRpcProvider(`https://eth-sepolia.g.alchemy.com/v2/${NEXT_PUBLIC_ALCHEMY_API_KEY}`);
 
 step(2, "Checking contract ownership");
-const deployer = new ethers.Wallet(DEPLOYER_PRIVATE_KEY, provider);
+
+// Validate DEPLOYER_PRIVATE_KEY early and give a clear error message.
+if (!DEPLOYER_PRIVATE_KEY) {
+  console.error("DEPLOYER_PRIVATE_KEY is not set. Add it to .env.local or to the keeperhub-submission environment secrets.");
+  process.exit(1);
+}
+
+// Detect common mistake where CI masks secrets as '***' in logs or the secret value
+// was accidentally set to a placeholder. Provide actionable guidance rather than
+// letting ethers throw an obscure INVALID_ARGUMENT error.
+if (DEPLOYER_PRIVATE_KEY === "***" || DEPLOYER_PRIVATE_KEY.trim() === "") {
+  console.error("DEPLOYER_PRIVATE_KEY appears to be a placeholder ('***') or empty. Ensure the real hex private key is stored as a secret and exposed to the job.");
+  process.exit(1);
+}
+
+let deployer;
+try {
+  // Constructing a Wallet will throw if the key is not valid — catch and reword.
+  deployer = new ethers.Wallet(DEPLOYER_PRIVATE_KEY, provider);
+} catch (err) {
+  console.error("DEPLOYER_PRIVATE_KEY is invalid or malformed:", err.message);
+  console.error("It must be either a 12/24-word mnemonic or a 0x-prefixed 64-hex-char private key (e.g. 0xabc123...).");
+  process.exit(1);
+}
+
 const contract = new ethers.Contract(NEXT_PUBLIC_CONTRACT_ADDRESS, OWNABLE_ABI, deployer);
 const currentOwner = await contract.owner();
 console.log(`Current owner: ${currentOwner}`);

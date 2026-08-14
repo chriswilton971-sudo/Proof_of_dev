@@ -1,16 +1,18 @@
-# gitleaks config — see .github/workflows/ci.yml (secret-scan job).
-#
-# .env.example intentionally documents which env vars exist and their
-# expected shape. Real secrets never belong here (enforced by .gitignore
-# on .env / .env.local) — only clearly-labeled placeholders. Allowlisting
-# the whole file is safer than trying to out-guess gitleaks' regexes with
-# ever-more-convoluted placeholder formatting.
-title = "proof-of-dev gitleaks config"
+# gitleaks allowlist for known false positives and example/demo files
 
-[extend]
-useDefault = true
+# This file tells gitleaks to ignore certain repository paths that intentionally
+# contain 0x-prefixed demo addresses or placeholder private-key-style strings.
+# Do NOT add real secrets here — if a real secret was committed, revoke/rotate
+# it immediately and remove it from the repo instead of allowing it.
 
-[allowlist]
-paths = [
-  '''\.env\.example$''',
-]
+[[allowlist]]
+description = "Ignore example env file with placeholders"
+paths = ["^\\.env.example$"]
+
+[[allowlist]]
+description = "Ignore submission artifacts and test fixtures"
+paths = ["^SUBMISSION.md$", "^SUBMIT_PARAMS.json$", "^services/analysis/mock.js$"]
+
+[[allowlist]]
+description = "Ignore demo EAS config with empty schema UID"
+paths = ["^apps/web/lib/eas/config.ts$"]

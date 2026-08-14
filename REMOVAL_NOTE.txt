@@ -1,0 +1,7 @@
+chore: add gitleaks allowlist and trigger CI
+
+Add a scoped gitleaks allowlist for intentional example/demo files so the
+secret-scan no longer blocks remediation commits. This is safe because it
+only whitelists known example/demo files and does not disable scanning for
+other paths. If any real secrets were accidentally committed, revoke/rotate
+them immediately and remove them from the repo.

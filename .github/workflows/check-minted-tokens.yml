@@ -32,8 +32,9 @@ jobs:
         if: always()
         run: cat result.txt >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Also surface result as an annotation (readable via Checks API)
+      - name: Also surface result as annotations (readable via Checks API)
         if: always()
         run: |
-          ENCODED=$(cat result.txt | sed ':a;N;$!ba;s/\n/%0A/g')
-          echo "::notice title=Check Minted Tokens result::$ENCODED"
+          while IFS= read -r line; do
+            echo "::notice title=Check Minted Tokens::$line"
+          done < result.txt

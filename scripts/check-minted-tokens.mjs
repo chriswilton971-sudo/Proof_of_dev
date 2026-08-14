@@ -38,15 +38,24 @@ const provider = new ethers.JsonRpcProvider(
 );
 const contract = new ethers.Contract(NEXT_PUBLIC_CONTRACT_ADDRESS, ABI, provider);
 
+function report(line) {
+  console.log(line);
+  // Also emit as a workflow error-level annotation (proven to actually
+  // surface via the Checks API, unlike ::notice::, and unlike wrapping
+  // this in a separate bash step reading a file) so results are
+  // retrievable programmatically, not just from a signed-in browser.
+  console.log(`::error title=Check Minted Tokens::${line.replace(/\n/g, " ")}`);
+}
+
 const [supply, owner] = await Promise.all([contract.totalSupply(), contract.owner()]);
 const total = Number(supply);
 
-console.log(`Contract: ${NEXT_PUBLIC_CONTRACT_ADDRESS}`);
-console.log(`Current owner: ${owner}`);
-console.log(`Total minted: ${total}\n`);
+report(`Contract: ${NEXT_PUBLIC_CONTRACT_ADDRESS}`);
+report(`Current owner: ${owner}`);
+report(`Total minted: ${total}`);
 
 if (total === 0) {
-  console.log("Nothing minted yet — you'll need to mint one before running the KeeperHub demo.");
+  report("Nothing minted yet — you'll need to mint one before running the KeeperHub demo.");
   process.exit(0);
 }
 
@@ -55,7 +64,7 @@ for (let tokenId = 1; tokenId <= total; tokenId++) {
     contract.ownerOf(tokenId).catch(() => "burned/unknown"),
     contract.isVerified(tokenId).catch(() => false),
   ]);
-  console.log(`Token #${tokenId} — owner: ${tokenOwner} — verified: ${verified}`);
+  report(`Token #${tokenId} — owner: ${tokenOwner} — verified: ${verified}`);
 }
 
 const unverified = [];
@@ -64,12 +73,11 @@ for (let tokenId = 1; tokenId <= total; tokenId++) {
   if (!verified) unverified.push(tokenId);
 }
 
-console.log("");
 if (unverified.length > 0) {
-  console.log(
+  report(
     `${unverified.length} token(s) not yet verified: [${unverified.join(", ")}] — ` +
       `any of these can be used directly with submit-hackathon.mjs, no new mint needed.`
   );
 } else {
-  console.log("All existing tokens are already verified — mint a new one to demo the flow end-to-end.");
+  report("All existing tokens are already verified — mint a new one to demo the flow end-to-end.");
 }

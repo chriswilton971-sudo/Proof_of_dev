@@ -1,10 +1,8 @@
 name: Submit to KeeperHub Hackathon
 
-# This workflow now supports both manual runs (workflow_dispatch) and
-# automatic runs on push to main. When triggered by a push it will read
-# tokenId/keeperHubWalletAddress from repository secrets (SUBMIT_TOKEN_ID
-# and SUBMIT_KEEPER_WALLET) and automatically confirm acceptOwnership to
-# produce a real on-chain transaction recorded in SUBMISSION.md.
+# This workflow supports manual runs (workflow_dispatch) and automatic runs on push to main.
+# For automated runs on push, it will prefer repository secrets SUBMIT_TOKEN_ID/SUBMIT_KEEPER_WALLET,
+# but will also read SUBMIT_PARAMS.json at repository root if present (convenience for automated triggers).
 
 on:
   workflow_dispatch:
@@ -57,21 +55,28 @@ jobs:
           KEEPERHUB_BASE_URL=${{ secrets.KEEPERHUB_BASE_URL || 'https://app.keeperhub.com' }}
           EOF
 
-      - name: Determine args (inputs or secrets for automated runs)
+      - name: Determine args (inputs, secrets, or SUBMIT_PARAMS.json for automated runs)
         id: args
         run: |
-          # Prefer explicit workflow inputs (manual run). For push-triggered
-          # automated runs, fall back to repository secrets SUBMIT_TOKEN_ID
-          # and SUBMIT_KEEPER_WALLET which must be configured beforehand.
+          set -euo pipefail
           ARGS=""
-          if [ -n "${{ github.event.inputs.tokenId }}" ]; then
+
+          # 1) Manual run via workflow_dispatch with explicit inputs
+          if [ -n "${{ github.event.inputs.tokenId }}" ] && [ -n "${{ github.event.inputs.keeperHubWalletAddress }}" ]; then
             ARGS="${{ github.event.inputs.tokenId }} ${{ github.event.inputs.keeperHubWalletAddress }}"
           else
+            # 2) Automated push — prefer repo secrets
             if [ -n "${{ secrets.SUBMIT_TOKEN_ID }}" ] && [ -n "${{ secrets.SUBMIT_KEEPER_WALLET }}" ]; then
               ARGS="${{ secrets.SUBMIT_TOKEN_ID }} ${{ secrets.SUBMIT_KEEPER_WALLET }}"
             else
-              echo "No tokenId/keeperHubWalletAddress provided via inputs or secrets."
-              exit 1
+              # 3) Fallback: read SUBMIT_PARAMS.json from repo root if present
+              if [ -f SUBMIT_PARAMS.json ]; then
+                echo "Found SUBMIT_PARAMS.json — reading tokenId and keeperWallet"
+                ARGS=$(node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('SUBMIT_PARAMS.json','utf8')); if(!p.tokenId||!p.keeperWallet){console.error('SUBMIT_PARAMS.json missing tokenId or keeperWallet'); process.exit(2);} console.log(p.tokenId + ' ' + p.keeperWallet)")
+              else
+                echo "No tokenId/keeperHubWallet provided via inputs, secrets, or SUBMIT_PARAMS.json."
+                exit 1
+              fi
             fi
           fi
 

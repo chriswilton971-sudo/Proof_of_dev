@@ -36,5 +36,6 @@ jobs:
         if: always()
         run: |
           while IFS= read -r line; do
-            echo "::notice title=Check Minted Tokens::$line"
+            echo "::error title=Check Minted Tokens::$line"
           done < result.txt
+          exit 0

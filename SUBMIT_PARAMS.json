@@ -1,4 +1,5 @@
 {
-  "tokenId": "2",
-  "keeperWallet": "0x700f0Cf10B7daD38D025DB8BF18f1F03294ffB74"
+  "tokenId": "1",
+  "keeperWallet": "0x700f0Cf10B7daD38D025DB8BF18f1F03294ffB74",
+  "simulate": true
 }

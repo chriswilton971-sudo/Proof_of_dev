@@ -1,0 +1,50 @@
+name: Direct Submit
+
+on:
+  workflow_dispatch:
+    inputs:
+      tokenId:
+        required: true
+        type: string
+      keeperHubWalletAddress:
+        required: true
+        type: string
+
+jobs:
+  submit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
+          NEXT_PUBLIC_CONTRACT_ADDRESS: ${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
+          KEEPERHUB_API_KEY: ${{ secrets.KEEPERHUB_API_KEY }}
+          KEEPERHUB_BASE_URL: ${{ secrets.KEEPERHUB_BASE_URL }}
+        run: |
+          node scripts/transfer-and-verify-direct.mjs "${{ inputs.tokenId }}" "${{ inputs.keeperHubWalletAddress }}" > result.txt 2>&1
+          cat result.txt
+      - name: Annotate
+        if: always()
+        run: |
+          while IFS= read -r line; do
+            echo "::error title=Direct Submit::$line"
+          done < result.txt
+          exit 0
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SUBMISSION
+          path: SUBMISSION.md
+          if-no-files-found: warn
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f SUBMISSION.md ]; then cat SUBMISSION.md >> "$GITHUB_STEP_SUMMARY"; fi

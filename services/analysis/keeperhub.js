@@ -152,31 +152,26 @@ export function buildMarkVerifiedCalldata(tokenId) {
 }
 
 /**
- * Builds the request body for POST /api/execute/contract-call. This is the
- * ONE place in the repo that constructs this shape — scripts/transfer-
- * ownership-to-keeperhub.mjs previously duplicated this with different,
- * unverified field names (chainId/contractAddress/functionName/functionArgs)
- * and now imports simulateContractCall/executeContractCall from here
- * instead. If the live schema turns out to differ, there's exactly one
- * function to fix, not two to keep in sync.
+ * Builds the request body for POST /api/execute/contract-call.
  *
- * Field names (`network`, `address`, `abiFunction`, `args`) match what
- * docs.keeperhub.com/ai-tools/mcp-server documents for the equivalent
- * web3/write-contract action config ("the abiFunction field is the
- * function as it appears in the contract's ABI") — the same underlying
- * wallet/execution layer, so this is a well-founded inference, not a
- * blind guess, but the exact Direct Execution REST body has not been
- * independently confirmed against a live call. Test with simulate:true
- * before trusting this for a real broadcast.
+ * Confirmed against a live 400 response: the previous field names
+ * (network/address/abiFunction/args/data), inferred from the MCP tool
+ * config docs, are wrong for this REST endpoint. Switched to the
+ * fields actually documented at docs.keeperhub.com/api/direct-execution:
+ * contractAddress, chainId (number), functionName (bare name, not full
+ * signature), functionArgs (JSON-stringified array), abi (optional
+ * human-readable ABI fragment array; omit to let KeeperHub auto-fetch
+ * from the block explorer).
  */
-function buildContractCallRequestBody({ network, contractAddress, abiFunctionSignature, args, calldata, simulate }) {
+function buildContractCallRequestBody({ network, contractAddress, abiFunctionSignature, args, simulate }) {
   const chainId = chainIdFromNetwork(network);
+  const functionName = abiFunctionSignature.match(/function\s+(\w+)\s*\(/)?.[1] ?? abiFunctionSignature;
   return {
-    network: String(chainId),
-    address: contractAddress,
-    abiFunction: abiFunctionSignature,
-    args: args.map(String),
-    data: calldata,
+    contractAddress,
+    chainId,
+    functionName,
+    functionArgs: JSON.stringify(args.map(String)),
+    abi: JSON.stringify([abiFunctionSignature]),
     simulate: Boolean(simulate),
   };
 }

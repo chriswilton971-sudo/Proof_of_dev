@@ -165,13 +165,21 @@ export function buildMarkVerifiedCalldata(tokenId) {
  */
 function buildContractCallRequestBody({ network, contractAddress, abiFunctionSignature, args, simulate }) {
   const chainId = chainIdFromNetwork(network);
-  const functionName = abiFunctionSignature.match(/function\s+(\w+)\s*\(/)?.[1] ?? abiFunctionSignature;
+  const iface = new Interface([abiFunctionSignature]);
+  const fragment = iface.fragments[0];
+  const functionName = fragment.name;
+  // KeeperHub rejected a raw human-readable signature string with
+  // "Function not found in ABI" -- it wants proper JSON ABI fragments.
+  // iface.format("json") just re-serializes human-readable strings in
+  // ethers v6; fragment.format("json") is what actually gives a real
+  // structured {type,name,inputs,outputs,...} object.
+  const jsonAbi = `[${fragment.format("json")}]`;
   return {
     contractAddress,
     chainId,
     functionName,
     functionArgs: JSON.stringify(args.map(String)),
-    abi: JSON.stringify([abiFunctionSignature]),
+    abi: jsonAbi,
     simulate: Boolean(simulate),
   };
 }

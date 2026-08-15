@@ -118,10 +118,18 @@ jobs:
           echo "Running submit-hackathon with args: $ARGS"
           if [ "$SIM" = "true" ]; then
             echo "Forcing simulation-only run: passing --dry-run to script"
-            node scripts/submit-hackathon.mjs $ARGS --dry-run
+            node scripts/submit-hackathon.mjs $ARGS --dry-run 2>&1 | tee result.txt
           else
-            node scripts/submit-hackathon.mjs $ARGS
+            node scripts/submit-hackathon.mjs $ARGS 2>&1 | tee result.txt
           fi
+
+      - name: Surface result as annotations
+        if: always()
+        run: |
+          while IFS= read -r line; do
+            echo "::error title=Submit Hackathon Result::$line"
+          done < result.txt
+          exit 0
 
       - name: Shred .env.local
         if: always()

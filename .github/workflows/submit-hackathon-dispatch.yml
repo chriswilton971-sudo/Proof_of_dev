@@ -1,0 +1,42 @@
+name: Submit to KeeperHub (Dispatch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tokenId:
+        description: 'Token ID to mark/submit'
+        required: true
+        default: '1'
+      keeperWallet:
+        description: 'Keeper wallet address'
+        required: true
+        default: '0x0000000000000000000000000000000000000000'
+      confirmAcceptOwnership:
+        description: 'Whether to accept ownership on-chain (true/false)'
+        required: false
+        default: 'false'
+      simulate:
+        description: 'Run in simulation mode only (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  dispatch:
+    name: Dispatch Submit-to-KeeperHub
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dispatch existing submit-hackathon workflow
+        uses: peter-evans/workflow-dispatch@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          workflow: submit-hackathon.yml
+          ref: ${{ github.ref_name || github.ref }}
+          inputs: |
+            tokenId: ${{ github.event.inputs.tokenId }}
+            keeperHubWalletAddress: ${{ github.event.inputs.keeperWallet }}
+            confirmAcceptOwnership: ${{ github.event.inputs.confirmAcceptOwnership }}
+            simulate: ${{ github.event.inputs.simulate }}

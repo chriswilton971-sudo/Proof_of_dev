@@ -1,0 +1,49 @@
+name: Mint and Verify via KeeperHub
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  mint-and-verify:
+    name: Mint self, then markVerified via KeeperHub
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      - name: Run mint-self-and-verify.mjs
+        env:
+          DEPLOYER_PRIVATE_KEY: ${{ secrets.DEPLOYER_PRIVATE_KEY }}
+          MINT_SIGNER_PRIVATE_KEY: ${{ secrets.MINT_SIGNER_PRIVATE_KEY }}
+          NEXT_PUBLIC_ALCHEMY_API_KEY: ${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
+          NEXT_PUBLIC_CONTRACT_ADDRESS: ${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
+          KEEPERHUB_API_KEY: ${{ secrets.KEEPERHUB_API_KEY }}
+          KEEPERHUB_BASE_URL: ${{ secrets.KEEPERHUB_BASE_URL }}
+        run: node scripts/mint-self-and-verify.mjs 2>&1 | tee result.txt
+
+      - name: Surface result as annotations
+        if: always()
+        run: |
+          while IFS= read -r line; do
+            echo "::error title=Mint And Verify::$line"
+          done < result.txt
+          exit 0
+
+      - name: Upload SUBMISSION.md
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SUBMISSION
+          path: SUBMISSION.md
+          if-no-files-found: warn
+
+      - name: Print result to job summary
+        if: always()
+        run: |
+          if [ -f SUBMISSION.md ]; then
+            cat SUBMISSION.md >> "$GITHUB_STEP_SUMMARY"
+          fi

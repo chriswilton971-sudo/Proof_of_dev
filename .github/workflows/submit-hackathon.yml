@@ -1,160 +1,46 @@
-name: Submit to KeeperHub Hackathon
-
-# This workflow supports manual runs (workflow_dispatch) and automated runs on push to main.
-# For automated runs on push, it will prefer repository secrets SUBMIT_TOKEN_ID/SUBMIT_KEEPER_WALLET,
-# or SUBMIT_PARAMS.json. If SUBMIT_PARAMS.json contains { "simulate": true } the run will be
-# forced simulation-only regardless of secrets.
-
-on:
-  workflow_dispatch:
-    inputs:
-      tokenId:
-        description: "Token ID to run markVerified(tokenId) for"
-        required: true
-        type: string
-      keeperHubWalletAddress:
-        description: "KeeperHub org wallet address (app.keeperhub.com → wallet settings)"
-        required: true
-        type: string
-      confirmAcceptOwnership:
-        description: "Actually broadcast acceptOwnership() (irreversible) — leave unchecked for a dry run"
-        required: false
-        type: boolean
-        default: false
-  push:
-    branches: [main]
-
-permissions:
-  contents: write
-
-jobs:
-  submit:
-    name: Run scripts/submit-hackathon.mjs
-    runs-on: ubuntu-latest
-    environment: keeperhub-submission
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Write .env.local from repo secrets
-        run: |
-          cat > .env.local <<EOF
-          DEPLOYER_PRIVATE_KEY=${{ secrets.DEPLOYER_PRIVATE_KEY }}
-          NEXT_PUBLIC_ALCHEMY_API_KEY=${{ secrets.NEXT_PUBLIC_ALCHEMY_API_KEY }}
-          NEXT_PUBLIC_CONTRACT_ADDRESS=${{ secrets.NEXT_PUBLIC_CONTRACT_ADDRESS }}
-          KEEPERHUB_API_KEY=${{ secrets.KEEPERHUB_API_KEY }}
-          KEEPERHUB_WEBHOOK_SECRET=${{ secrets.KEEPERHUB_WEBHOOK_SECRET }}
-          KEEPERHUB_BASE_URL=${{ secrets.KEEPERHUB_BASE_URL || 'https://app.keeperhub.com' }}
-          EOF
-
-      - name: Determine args (inputs, secrets, or SUBMIT_PARAMS.json for automated runs)
-        id: args
-        run: |
-          set -euo pipefail
-          ARGS=""
-          SIMULATE="false"
-
-          # 1) Manual run via workflow_dispatch with explicit inputs
-          if [ -n "${{ github.event.inputs.tokenId }}" ] && [ -n "${{ github.event.inputs.keeperHubWalletAddress }}" ]; then
-            ARGS="${{ github.event.inputs.tokenId }} ${{ github.event.inputs.keeperHubWalletAddress }}"
-          else
-            # 2) Automated push — prefer repo secrets
-            if [ -n "${{ secrets.SUBMIT_TOKEN_ID }}" ] && [ -n "${{ secrets.SUBMIT_KEEPER_WALLET }}" ]; then
-              ARGS="${{ secrets.SUBMIT_TOKEN_ID }} ${{ secrets.SUBMIT_KEEPER_WALLET }}"
-            else
-              # 3) Fallback: read SUBMIT_PARAMS.json from repo root if present
-              if [ -f SUBMIT_PARAMS.json ]; then
-                echo "Found SUBMIT_PARAMS.json — reading tokenId, keeperWallet and simulate flag"
-                NODEOUT=$(node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('SUBMIT_PARAMS.json','utf8')); if(!p.tokenId||!p.keeperWallet){console.error('SUBMIT_PARAMS.json missing tokenId or keeperWallet'); process.exit(2);} console.log(p.tokenId + ' ' + p.keeperWallet + (p.simulate? ' SIMULATE':'') )")
-                ARGS="$NODEOUT"
-              else
-                echo "No tokenId/keeperHubWallet provided via inputs, secrets, or SUBMIT_PARAMS.json."
-                exit 1
-              fi
-            fi
-          fi
-
-          # Detect simulate marker from SUBMIT_PARAMS.json
-          if echo "$ARGS" | grep -q "SIMULATE"; then
-            SIMULATE="true"
-            ARGS=${ARGS// SIMULATE/}
-            echo "Simulation-only mode requested via SUBMIT_PARAMS.json"
-          fi
-
-          # Decide whether to auto-confirm acceptOwnership.
-          if [ "${{ github.event_name }}" = "push" ]; then
-            if [ "$SIMULATE" = "true" ]; then
-              echo "SIMULATION requested — NOT enabling confirm-accept-ownership"
-            else
-              if grep -Eiq '^DEPLOYER_PRIVATE_KEY=0x[0-9a-fA-F]{64}' .env.local || grep -Eiq '^DEPLOYER_PRIVATE_KEY=([0-9a-zA-Z ]{10,})' .env.local; then
-                echo "DEPLOYER_PRIVATE_KEY appears set — enabling confirm-accept-ownership for automated run"
-                ARGS="$ARGS --confirm-accept-ownership"
-              else
-                echo "DEPLOYER_PRIVATE_KEY missing or placeholder — performing simulation-only (no acceptOwnership)"
-              fi
-            fi
-          else
-            if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
-              ARGS="$ARGS --confirm-accept-ownership"
-            fi
-          fi
-
-          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
-          echo "simulate=$SIMULATE" >> "$GITHUB_OUTPUT"
-
-      - name: Run submit-hackathon.mjs
-        run: |
-          ARGS="${{ steps.args.outputs.args }}"
-          SIM="${{ steps.args.outputs.simulate }}"
-          echo "Running submit-hackathon with args: $ARGS"
-          if [ "$SIM" = "true" ]; then
-            echo "Forcing simulation-only run: passing --dry-run to script"
-            node scripts/submit-hackathon.mjs $ARGS --dry-run 2>&1 | tee result.txt
-          else
-            node scripts/submit-hackathon.mjs $ARGS 2>&1 | tee result.txt
-          fi
-
-      - name: Surface result as annotations
-        if: always()
-        run: |
-          while IFS= read -r line; do
-            echo "::error title=Submit Hackathon Result::$line"
-          done < result.txt
-          exit 0
-
-      - name: Shred .env.local
-        if: always()
-        run: rm -f .env.local
-
-      - name: Upload SUBMISSION.md
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: SUBMISSION
-          path: SUBMISSION.md
-          if-no-files-found: warn
-
-      - name: Commit SUBMISSION.md back to repository (auto-publish)
-        if: always() && steps.args.outputs.args != ''
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: add SUBMISSION.md with KeeperHub submission details [skip ci]"
-          file_pattern: SUBMISSION.md
-
-      - name: Print result to job summary
-        if: always()
-        run: |
-          if [ -f SUBMISSION.md ]; then
-            cat SUBMISSION.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "SUBMISSION.md was not generated — check the run logs above for where it failed." >> "$GITHUB_STEP_SUMMARY"
-          fi
+diff --git a/.github/workflows/submit-hackathon.yml b/.github/workflows/submit-hackathon.yml
+index 1234567..89abcde 100644
+--- a/.github/workflows/submit-hackathon.yml
++++ b/.github/workflows/submit-hackathon.yml
+@@ -1,6 +1,6 @@
+@@
+-          # Detect simulate marker from SUBMIT_PARAMS.json
+-          if echo "$ARGS" | grep -q "SIMULATE"; then
+-            SIMULATE="true"
+-            ARGS=${ARGS// SIMULATE/}
+-            echo "Simulation-only mode requested via SUBMIT_PARAMS.json"
+-          fi
++          # Prefer workflow inputs, then secrets, then SUBMIT_PARAMS.json (sanitized)
++          if [ "${{ github.event.inputs.simulate }}" = "true" ]; then
++            SIMULATE="true"
++            echo "Simulation-only mode requested via workflow input"
++          elif [ "${{ secrets.SIMULATE }}" = "true" ]; then
++            SIMULATE="true"
++            echo "Simulation-only mode requested via repo secret SIMULATE"
++          else
++            # Fall back to checking SUBMIT_PARAMS.json only if present
++            if [ -f SUBMIT_PARAMS.json ] && grep -q "simulate" SUBMIT_PARAMS.json; then
++              SIMULATE="true"
++              echo "Simulation-only mode requested via SUBMIT_PARAMS.json"
++            fi
++          fi
+@@
+-            if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
+-              ARGS="$ARGS --confirm-accept-ownership"
+-            fi
++            if [ "${{ github.event.inputs.confirmAcceptOwnership }}" = "true" ]; then
++              ARGS="$ARGS --confirm-accept-ownership"
++            elif [ "${{ secrets.CONFIRM_ACCEPT_OWNERSHIP }}" = "true" ]; then
++              ARGS="$ARGS --confirm-accept-ownership"
++            fi
+@@
+-          if [ -f SUBMISSION.md ]; then
+-            cat SUBMISSION.md >> "$GITHUB_STEP_SUMMARY"
+-          else
+-            echo "SUBMISSION.md was not generated — check the run logs above for where it failed." >> "$GITHUB_STEP_SUMMARY"
+-          fi
++          if [ -f SUBMISSION.md ]; then
++            cat SUBMISSION.md >> "$GITHUB_STEP_SUMMARY"
++          else
++            echo "SUBMISSION.md was not generated — check the run logs above for where it failed." >> "$GITHUB_STEP_SUMMARY"
++          fi
